@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-x_api_auto_task_xai_xml.py  v7.0 (RapidAPI抓取 + xAI XML提取 + 完美双轨渲染)
-Architecture: Expert & Global Track -> RapidAPI -> xAI XML Synthesis -> Clean UI Rendering
+x_api_auto_task_xai_xml.py  v7.1 (RapidAPI + 官方 xai-sdk + 最新 Grok 模型)
+Architecture: Expert & Global Track -> RapidAPI -> xAI SDK Synthesis -> Clean UI Rendering
 """
 
 import os
@@ -15,22 +15,24 @@ from pathlib import Path
 import requests
 from requests.exceptions import ConnectionError, Timeout
 
+# 🚨 引入官方 xAI SDK
+from xai_sdk import Client
+from xai_sdk.chat import user, system
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🚨 模式切换开关 🚨
-# False = 全量运行（扫 100 人 + 2次全球热点搜索，推荐！）
-# True  = 测试模式（只扫前 10 人 + 2次全球热点搜索，省配额）
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TEST_MODE = False
+TEST_MODE = os.getenv("TEST_MODE_ENV", "false").lower() == "true"
 
-# ── 环境变量 (严格对齐 Secrets 规范) ──────────────────────────────
+# ── 环境变量 ──────────────────────────────
 JIJYUN_WEBHOOK_URL  = os.getenv("JIJYUN_WEBHOOK_URL", "")
 SF_API_KEY          = os.getenv("SF_API_KEY", "")
-XAI_API_KEY         = os.getenv("xAI_API_KEY", "")    # 🚨 xAI API Key
-TWTAPI_KEY          = os.getenv("TWTAPI_KEY", "")     # RapidAPI Key
+XAI_API_KEY         = os.getenv("XAI_API_KEY", "")    # 改用全大写，匹配 SDK 习惯
+TWTAPI_KEY          = os.getenv("TWTAPI_KEY", "")     
 IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "") 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🚨 专属你的 RapidAPI (Twttr API) 接口配置 🚨
+# 🚨 RapidAPI 接口配置 🚨
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 RAPIDAPI_HOST = "twitter241.p.rapidapi.com"
 SEARCH_PATH   = "/search-v2" 
@@ -38,7 +40,6 @@ URL_TWTAPI    = "https://" + RAPIDAPI_HOST + SEARCH_PATH
 COMMENTS_PATH = "/comments-v2"
 URL_COMMENTS  = "https://" + RAPIDAPI_HOST + COMMENTS_PATH
 
-# ── Base64 URL 隐身术 ─────────
 def D(b64_str):
     return base64.b64decode(b64_str).decode("utf-8")
 
@@ -110,7 +111,7 @@ def safe_int(val):
         return 0
 
 # ==============================================================================
-# 🚀 第一阶段：降维解析与抓取引擎 (保持原样)
+# 🚀 第一阶段：降维解析与抓取引擎
 # ==============================================================================
 def parse_rapidapi_tweets(data) -> list:
     all_tweets = []
@@ -263,7 +264,7 @@ def fetch_top_comments(tweet_id: str) -> list:
 
 
 # ==============================================================================
-# 🚀 第二阶段：纯 XML 提示词与大模型调用 (核心替换区域)
+# 🚀 第二阶段：纯 XML 提示词与大模型调用 (重构为官方 xai-sdk 方案)
 # ==============================================================================
 def _build_xml_prompt(combined_jsonl: str, today_str: str) -> str:
     return f"""
@@ -316,50 +317,39 @@ def _build_xml_prompt(combined_jsonl: str, today_str: str) -> str:
 """
 
 def llm_call_xai(combined_jsonl: str, today_str: str) -> str:
-    if not XAI_API_KEY:
-        print("[LLM] WARNING: xAI_API_KEY not configured!", flush=True)
+    # 🚨 适配 SDK 逻辑
+    api_key = XAI_API_KEY.strip()
+    if not api_key:
+        print("[LLM/xAI] WARNING: XAI_API_KEY not configured!", flush=True)
         return ""
 
-    api_key = XAI_API_KEY.strip() # 防隐形换行符
     max_data_chars = 100000 
     data = combined_jsonl[:max_data_chars] if len(combined_jsonl) > max_data_chars else combined_jsonl
     prompt = _build_xml_prompt(data, today_str)
     
-    model_name = "grok-2-latest" 
+    # 使用你最新提供的官方模型标识符
+    model_name = "grok-4.20-beta-latest-non-reasoning" 
 
-    print(f"[LLM/xAI] Requesting {model_name}...", flush=True)
+    print(f"[LLM/xAI] Requesting {model_name} via Official xai-sdk...", flush=True)
+    
+    # 初始化官方 Client
+    client = Client(api_key=api_key)
+    
     for attempt in range(1, 4):
         try:
-            resp = requests.post(
-                "https://api.x.ai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model_name,
-                    "messages": [
-                        {"role": "system", "content": "You are a professional analytical bot. You strictly output in XML format as instructed, without any markdown backticks."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.6,
-                    "max_tokens": 4096, # 强制给足 Token 上限防拦截
-                },
-                timeout=180,
-            )
+            # 创建 Chat 实例
+            chat = client.chat.create(model=model_name)
+            chat.append(system("You are a professional analytical bot. You strictly output in XML format as instructed, without any markdown backticks."))
+            chat.append(user(prompt))
             
-            resp.raise_for_status() 
-            result = resp.json()["choices"][0]["message"]["content"].strip()
+            # 使用官方 sample() 提取内容
+            result = chat.sample().content.strip()
+            
             print(f"[LLM/xAI] OK Response received ({len(result)} chars)", flush=True)
             return result
             
-        except requests.exceptions.HTTPError as e:
-            print(f"[LLM/xAI] Attempt {attempt} failed: {e}", flush=True)
-            if e.response is not None:
-                print(f"[LLM/xAI] 🚨 ERROR DETAILS: {e.response.text}", flush=True)
-            time.sleep(2 ** attempt)
         except Exception as e:
-            print(f"[LLM/xAI] Attempt {attempt} failed (Network/Other): {e}", flush=True)
+            print(f"[LLM/xAI] Attempt {attempt} failed: {e}", flush=True)
             time.sleep(2 ** attempt)
             
     return ""
@@ -472,7 +462,7 @@ def render_feishu_card(parsed_data: dict, today_str: str):
         "card": {
             "config": {"wide_screen_mode": True, "enable_forward": True},
             "header": {"title": {"content": f"昨晚硅谷在聊啥 | {today_str}", "tag": "plain_text"}, "template": "blue"},
-            "elements": elements + [{"tag": "note", "elements": [{"tag": "plain_text", "content": "Powered by RapidAPI + xAI (Grok) Pipeline"}]}]
+            "elements": elements + [{"tag": "note", "elements": [{"tag": "plain_text", "content": "Powered by RapidAPI + xai-sdk Pipeline"}]}]
         }
     }
 
@@ -530,7 +520,7 @@ def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
 
 
 # ==============================================================================
-# 附加工具 (图床上传与推送逻辑保持不变)
+# 附加工具 (图床上传与推送)
 # ==============================================================================
 def generate_cover_image(prompt):
     if not SF_API_KEY or not prompt: return ""
@@ -574,7 +564,7 @@ def save_daily_data(today_str: str, post_objects: list, report_text: str):
 def main():
     print("=" * 60, flush=True)
     mode_str = "测试模式(10人)" if TEST_MODE else "全量模式(100人)"
-    print(f"昨晚硅谷在聊啥 v7.0 (RapidAPI + xAI XML解析防断裂版 - {mode_str})", flush=True)
+    print(f"昨晚硅谷在聊啥 v7.1 (RapidAPI + 官方 xai-sdk 版 - {mode_str})", flush=True)
     print("=" * 60, flush=True)
 
     today_str, _ = get_dates()
@@ -584,7 +574,7 @@ def main():
     
     if not all_raw_tweets:
         print("⚠️ 未能抓取推文，使用测试数据跳过...", flush=True)
-        all_raw_tweets = [{"screen_name": "elonmusk", "text": "Grok 2 is amazing!", "favorites": 10000, "created_at": "0101", "replies": 500}]
+        all_raw_tweets = [{"screen_name": "elonmusk", "text": "Grok via SDK is amazingly fast!", "favorites": 10000, "created_at": "0101", "replies": 500}]
         
     all_posts_flat = []
     
@@ -632,7 +622,7 @@ def main():
     combined_jsonl = "\n".join(json.dumps(obj, ensure_ascii=False) for obj in final_feed)
     print(f"\n[Data] 组装完成：{len(final_feed)} 条推文 (含共识提纯数据) ready for LLM.")
 
-    # 🚨 核心更换点：调用 xAI 提取 XML 数据
+    # 🚨 核心更换点：调用 xai-sdk 提取 XML 数据
     if combined_jsonl.strip():
         xml_result = llm_call_xai(combined_jsonl, today_str)
         
@@ -655,9 +645,9 @@ def main():
                 wechat_title = parsed_data["cover"]["title"] or f"昨晚硅谷在聊啥 | {today_str}"
                 push_to_jijyun(html_content, title=wechat_title, cover_url=cover_url)
                 
-            # 保存数据 (为了兼容原逻辑，我们把 xml_result 作为 report_text 保存下来)
+            # 保存数据
             save_daily_data(today_str, final_feed, xml_result)
-            print("\n🎉 V7.0 运行完毕！", flush=True)
+            print("\n🎉 V7.1 (SDK版) 运行完毕！", flush=True)
         else:
             print("❌ LLM 处理失败，任务终止。")
 
