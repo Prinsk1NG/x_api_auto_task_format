@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-x_api_auto_task_xai_xml.py  v7.4 (终极防爆破：翻译铁律 + 中文标点容错)
-Architecture: Expert & Global Track -> RapidAPI -> xAI SDK Synthesis -> Clean UI Rendering
+x_api_auto_task_xai_xml.py  v7.7 (三池隔离 + 智能密钥轮换防封版)
+Architecture: Whales/Experts/Global Track -> Key Pool -> RapidAPI -> xAI SDK -> Clean UI
 """
 
 import os
@@ -9,6 +9,7 @@ import re
 import json
 import time
 import base64
+import random
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -25,8 +26,22 @@ TEST_MODE = os.getenv("TEST_MODE_ENV", "false").lower() == "true"
 JIJYUN_WEBHOOK_URL  = os.getenv("JIJYUN_WEBHOOK_URL", "")
 SF_API_KEY          = os.getenv("SF_API_KEY", "")
 XAI_API_KEY         = os.getenv("XAI_API_KEY", "")    
-TWTAPI_KEY          = os.getenv("TWTAPI_KEY", "")     
 IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "") 
+
+# 🚨 动态密钥池装载机制 (支持无限扩容小号)
+TWT_KEYS = []
+for i in range(1, 10):
+    k = os.getenv(f"TWTAPI_KEY_{i}")
+    if k and k.strip(): TWT_KEYS.append(k.strip())
+
+# 兼容旧版本主 Key
+legacy_key = os.getenv("TWTAPI_KEY", "")
+if legacy_key and legacy_key.strip() and legacy_key not in TWT_KEYS:
+    TWT_KEYS.append(legacy_key.strip())
+
+def get_random_twt_key():
+    if not TWT_KEYS: return ""
+    return random.choice(TWT_KEYS)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🚨 RapidAPI 接口配置 🚨
@@ -43,16 +58,22 @@ def D(b64_str):
 URL_SF_IMAGE   = D("aHR0cHM6Ly9hcGkuc2lsaWNvbmZsb3cuY24vdjEvaW1hZ2VzL2dlbmVyYXRpb25z")
 URL_IMGBB      = D("aHR0cHM6Ly9hcGkuaW1nYmIuY29tLzEvdXBsb2Fk")
 
-ALL_ACCOUNTS = [
-    "elonmusk", "sama", "karpathy", "demishassabis", "darioamodei",
+# ── 单独拎出“巨鲸”账号（流量极其巨大的顶流，单独控制抓取粒度）
+WHALE_ACCOUNTS = [
+    "elonmusk", "sama", "gregbrockman", "pmarca", "lexfridman"
+]
+
+# ── 剩下的硬核专家/开发者/VC
+EXPERT_ACCOUNTS = [
+    "karpathy", "demishassabis", "darioamodei",
     "OpenAI", "AnthropicAI", "GoogleDeepMind", "xAI", "AIatMeta",
-    "GoogleAI", "MSFTResearch", "IlyaSutskever", "gregbrockman",
+    "GoogleAI", "MSFTResearch", "IlyaSutskever",
     "GaryMarcus", "rowancheung", "clmcleod", "bindureddy",
     "dotey", "oran_ge", "vista8", "imxiaohu", "Sxsyer",
     "K_O_D_A_D_A", "tualatrix", "linyunqiu", "garywong", "web3buidl",
     "AI_Era", "AIGC_News", "jiangjiang", "hw_star", "mranti", "nishuang",
     "a16z", "ycombinator", "lightspeedvp", "sequoia", "foundersfund",
-    "eladgil", "pmarca", "bchesky", "chamath", "paulg",
+    "eladgil", "bchesky", "chamath", "paulg",
     "TheInformation", "TechCrunch", "verge", "WIRED", "Scobleizer", "bentossell",
     "HuggingFace", "MistralAI", "Perplexity_AI", "GroqInc", "Cohere",
     "TogetherCompute", "runwayml", "Midjourney", "StabilityAI", "Scale_AI",
@@ -63,11 +84,12 @@ ALL_ACCOUNTS = [
     "rabovitz", "htcvive", "XREAL_Global", "RayBan", "MetaQuestVR", "PatrickMoorhead",
     "jeffdean", "chrmanning", "hardmaru", "goodfellow_ian", "feifeili",
     "_akhaliq", "promptengineer", "AI_News_Tech", "siliconvalley", "aithread",
-    "aibreakdown", "aiexplained", "aipubcast", "lexfridman", "hubermanlab", "swyx",
+    "aibreakdown", "aiexplained", "aipubcast", "hubermanlab", "swyx",
 ]
 
 if TEST_MODE:
-    ALL_ACCOUNTS = ALL_ACCOUNTS[:10]
+    WHALE_ACCOUNTS = WHALE_ACCOUNTS[:2]
+    EXPERT_ACCOUNTS = EXPERT_ACCOUNTS[:8]
 
 def get_feishu_webhooks() -> list:
     urls = []
@@ -107,7 +129,7 @@ def safe_int(val):
         return 0
 
 # ==============================================================================
-# 🚀 第一阶段：降维解析与抓取引擎
+# 🚀 第一阶段：解耦重构的灵活抓取引擎 (加入智能轮换 Key)
 # ==============================================================================
 def parse_rapidapi_tweets(data) -> list:
     all_tweets = []
@@ -160,19 +182,28 @@ def parse_rapidapi_tweets(data) -> list:
             unique.append(t)
     return unique
 
-def fetch_all_tweets_batched(accounts: list) -> list:
-    if not TWTAPI_KEY: return []
+def fetch_user_tweets(accounts: list, chunk_size: int, label: str) -> list:
+    """定向抓取指定人群，可灵活配置 chunk_size 防截断，支持 Key 轮换"""
+    if not TWT_KEYS: 
+        print(f"⚠️ 未配置任何 TWTAPI_KEY，跳过{label}抓取", flush=True)
+        return []
+    
     yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
-    chunk_size = 10
     chunks = [accounts[i:i + chunk_size] for i in range(0, len(accounts), chunk_size)]
     all_tweets = []
-    headers = {"x-rapidapi-key": TWTAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
     consecutive_errors = 0  
+    
     for i, chunk in enumerate(chunks, 1):
         if consecutive_errors >= 2: break
-        print(f"\n⏳ [专家扫盘] 第 {i}/{len(chunks)} 批账号...", flush=True)
+        
+        # 🚨 每次请求前，随机抽取一把钥匙
+        current_key = get_random_twt_key()
+        headers = {"x-rapidapi-key": current_key, "x-rapidapi-host": RAPIDAPI_HOST}
+        
+        print(f"\n⏳ [{label}扫盘] 第 {i}/{len(chunks)} 批账号 (密钥尾号: ...{current_key[-4:]})...", flush=True)
         query = " OR ".join([f"from:{acc}" for acc in chunk])
         params = {"query": f"({query}) since:{yesterday} -is:retweet", "type": "Latest", "count": "40"}
+        
         success = False
         for attempt in range(3):
             try:
@@ -188,21 +219,37 @@ def fetch_all_tweets_batched(accounts: list) -> list:
                     consecutive_errors += 1
                     time.sleep(2)
                     if consecutive_errors >= 2: break 
-                else: time.sleep(2)
+                else: 
+                    time.sleep(2)
             except Exception as e:
                 print(f"  ⚠️ 搜索接口异常: {e}", flush=True)
                 time.sleep(2)
+                
         if success: time.sleep(1.5)
         else: time.sleep(3)
+        
+    return all_tweets
 
+def fetch_global_hot_tweets() -> list:
+    """独立的全网热点探测引擎，支持 Key 轮换"""
+    if not TWT_KEYS: return []
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    all_tweets = []
+    
     print(f"\n📡 [全网探测] 启动策略扫描全球突发热点...", flush=True)
     grok_queries = [
         f'(AI OR "artificial intelligence" OR LLM OR OpenAI OR xAI OR Grok OR Anthropic OR DeepMind OR Claude) since:{yesterday} min_faves:50 -is:retweet',
         f'(AI OR LLM) (release OR launch OR breakthrough OR update) since:{yesterday} min_faves:30 (filter:links OR filter:media) -is:retweet'
     ]
+    
     for idx, q in enumerate(grok_queries, 1):
-        print(f"  🔍 执行策略 {idx}/2...", flush=True)
+        # 🚨 每次搜索前，随机抽取钥匙
+        current_key = get_random_twt_key()
+        headers = {"x-rapidapi-key": current_key, "x-rapidapi-host": RAPIDAPI_HOST}
+        
+        print(f"  🔍 执行策略 {idx}/2 (密钥尾号: ...{current_key[-4:]})...", flush=True)
         params_discovery = {"query": q, "type": "Top", "count": "20"}
+        
         for attempt in range(3):
             try:
                 resp = requests.get(URL_TWTAPI, headers=headers, params=params_discovery, timeout=25)
@@ -217,12 +264,17 @@ def fetch_all_tweets_batched(accounts: list) -> list:
                 print(f"  ⚠️ 全网探测接口异常: {e}", flush=True)
                 time.sleep(2)
         time.sleep(1.5)
+        
     return all_tweets
 
 def fetch_top_comments(tweet_id: str) -> list:
-    if not tweet_id or not TWTAPI_KEY: return []
-    print(f"  🎯 [爆破] 正在深挖神评 (Tweet ID: {tweet_id})...", flush=True)
-    headers = {"x-rapidapi-key": TWTAPI_KEY, "x-rapidapi-host": RAPIDAPI_HOST}
+    """获取神评，支持 Key 轮换"""
+    if not tweet_id or not TWT_KEYS: return []
+    
+    current_key = get_random_twt_key()
+    headers = {"x-rapidapi-key": current_key, "x-rapidapi-host": RAPIDAPI_HOST}
+    
+    print(f"  🎯 [爆破] 正在深挖神评 (Tweet ID: {tweet_id}, 密钥尾号: ...{current_key[-4:]})...", flush=True)
     try:
         resp = requests.get(URL_COMMENTS, headers=headers, params={"pid": tweet_id, "rankingMode": "Relevance", "count": "20"}, timeout=25)
         if resp.status_code == 200:
@@ -234,7 +286,7 @@ def fetch_top_comments(tweet_id: str) -> list:
 
 
 # ==============================================================================
-# 🚀 第二阶段：纯 XML 提示词与大模型调用 (重构为官方 xai-sdk 方案)
+# 🚀 第二阶段：纯 XML 提示词与大模型调用 
 # ==============================================================================
 def _build_xml_prompt(combined_jsonl: str, today_str: str) -> str:
     return f"""
@@ -254,7 +306,7 @@ def _build_xml_prompt(combined_jsonl: str, today_str: str) -> str:
   
   <THEMES>
     <THEME type="shift" emoji="⚔️">
-      <TITLE>主题标题：副标题</TITLE>
+      <TITLE>主题标题：副标题 (请尽可能多地挖掘，输出 5-8 个独立话题，不要过度合并不同专家的观点)</TITLE>
       <NARRATIVE>一句话核心判断（直接输出观点文本，不要带前缀）</NARRATIVE>
       <TWEET account="X账号名" role="英文身份标签">【严禁纯英文】以中文为主翻译原文观点，可夹杂少量英文黑话</TWEET>
       <TWEET account="..." role="...">...</TWEET>
@@ -263,7 +315,7 @@ def _build_xml_prompt(combined_jsonl: str, today_str: str) -> str:
     </THEME>
 
     <THEME type="new" emoji="🌱">
-      <TITLE>主题标题：副标题</TITLE>
+      <TITLE>主题标题：副标题 (请尽可能多地挖掘，输出 5-8 个独立话题，不要过度合并不同专家的观点)</TITLE>
       <NARRATIVE>一句话新趋势定义（直接输出观点文本，不要带前缀）</NARRATIVE>
       <TWEET account="X账号名" role="英文身份标签">【严禁纯英文】以中文为主翻译原文观点，可夹杂少量英文黑话</TWEET>
       <TWEET account="..." role="...">...</TWEET>
@@ -346,11 +398,9 @@ def parse_llm_xml(xml_text: str) -> dict:
         theme_type = type_m.group(1).strip().lower() if type_m else "shift"
         emoji = emoji_m.group(1).strip() if emoji_m else "🔥"
         
-        # 🚨 核心修复：优先从 <TITLE> 标签中安全提取标题
         t_tag = re.search(r'<TITLE>(.*?)</TITLE>', theme_body, re.IGNORECASE | re.DOTALL)
         theme_title = t_tag.group(1).strip() if t_tag else ""
         
-        # 兜底机制：如果大模型还是犯病把标题写在了属性里
         if not theme_title:
             title_m = re.search(r'title\s*=\s*[\'"“”](.*?)[\'"“”]', attrs, re.IGNORECASE)
             theme_title = title_m.group(1).strip() if title_m else "未命名主题"
@@ -400,7 +450,7 @@ def parse_llm_xml(xml_text: str) -> dict:
     return data
 
 # ==============================================================================
-# 🚀 第三阶段：结构化渲染引擎 (双模态自适应)
+# 🚀 第三阶段：结构化渲染引擎
 # ==============================================================================
 def render_feishu_card(parsed_data: dict, today_str: str):
     webhooks = get_feishu_webhooks()
@@ -458,7 +508,7 @@ def render_feishu_card(parsed_data: dict, today_str: str):
         "card": {
             "config": {"wide_screen_mode": True, "enable_forward": True},
             "header": {"title": {"content": f"昨晚硅谷在聊啥 | {today_str}", "tag": "plain_text"}, "template": "blue"},
-            "elements": elements + [{"tag": "note", "elements": [{"tag": "plain_text", "content": "Powered by RapidAPI + xai-sdk Pipeline"}]}]
+            "elements": elements + [{"tag": "note", "elements": [{"tag": "plain_text", "content": "Powered by RapidAPI Key-Pool + xai-sdk"}]}]
         }
     }
 
@@ -565,13 +615,24 @@ def save_daily_data(today_str: str, post_objects: list, report_text: str):
 
 def main():
     print("=" * 60, flush=True)
-    mode_str = "测试模式(10人)" if TEST_MODE else "全量模式(100人)"
-    print(f"昨晚硅谷在聊啥 v7.4 (终极防爆破版 - {mode_str})", flush=True)
+    mode_str = "测试模式" if TEST_MODE else "全量模式"
+    print(f"昨晚硅谷在聊啥 v7.7 (三池分流 + 智能密钥轮换版 - {mode_str})", flush=True)
     print("=" * 60, flush=True)
+    print(f"🔑 成功装载 {len(TWT_KEYS)} 把 RapidAPI 密钥，准备进入轮换并发", flush=True)
 
     today_str, _ = get_dates()
     
-    all_raw_tweets = fetch_all_tweets_batched(ALL_ACCOUNTS)
+    all_raw_tweets = []
+    
+    # 🚨 第 1 步：定向抓取巨鲸池（严格设为 3 避免截断）
+    all_raw_tweets.extend(fetch_user_tweets(WHALE_ACCOUNTS, chunk_size=3, label="巨鲸"))
+    
+    # 🚨 第 2 步：定向抓取专家池（设为 10 提速）
+    all_raw_tweets.extend(fetch_user_tweets(EXPERT_ACCOUNTS, chunk_size=10, label="专家"))
+    
+    # 🚨 第 3 步：全网热点扫描
+    all_raw_tweets.extend(fetch_global_hot_tweets())
+    
     if not all_raw_tweets:
         print("⚠️ 未能抓取推文，使用测试数据跳过...", flush=True)
         all_raw_tweets = [{"screen_name": "elonmusk", "text": "Grok via SDK is amazingly fast!", "favorites": 10000, "created_at": "0101", "replies": 500}]
@@ -591,17 +652,35 @@ def main():
                 "qt": t.get("quote_text", "")[:200]
             })
 
+    # 【三池配额、流量平权与高热提纯】
     all_posts_flat.sort(key=lambda x: x["l"], reverse=True)
-    final_feed = []
+    
+    lower_whales = set(a.lower() for a in WHALE_ACCOUNTS)
+    lower_experts = set(a.lower() for a in EXPERT_ACCOUNTS)
+    
+    whale_feed = []
+    expert_feed = []
+    global_feed = []
     account_counts = {}
     
     for t in all_posts_flat:
         if len(t.get("s", "")) <= 20: continue
-        author = t.get("a", "Unknown")
+        
+        author = t.get("a", "Unknown").lower()
         if account_counts.get(author, 0) >= 3: continue
-        final_feed.append(t)
+            
         account_counts[author] = account_counts.get(author, 0) + 1
-        if len(final_feed) >= 40: break
+        
+        # 🚨 核心分流
+        if author in lower_whales:
+            whale_feed.append(t)
+        elif author in lower_experts:
+            expert_feed.append(t)
+        else:
+            global_feed.append(t)
+
+    # 🚨 强制配额：巨鲸10条，专家50条，全网15条，总计 75 条喂给大模型
+    final_feed = whale_feed[:10] + expert_feed[:50] + global_feed[:15]
 
     top_3_tweets = [t for t in final_feed if t.get("tweet_id")][:3]
     print(f"\n[深挖] 锁定今日最具争议的 {len(top_3_tweets)} 大话题，开始抓取评论区...")
@@ -631,7 +710,7 @@ def main():
                 push_to_jijyun(html_content, title=wechat_title, cover_url=cover_url)
                 
             save_daily_data(today_str, final_feed, xml_result)
-            print("\n🎉 V7.4 运行完毕！", flush=True)
+            print("\n🎉 V7.7 运行完毕！", flush=True)
         else:
             print("❌ LLM 处理失败，任务终止。")
 
