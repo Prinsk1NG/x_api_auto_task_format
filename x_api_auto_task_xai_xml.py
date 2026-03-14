@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-x_api_auto_task_xai_xml.py  v7.8 (多源融合版: RapidAPI + Perplexity + Tavily + xAI)
-Architecture: Multi-Source Tracking -> RapidAPI/PPLX/Tavily -> xAI SDK (XML) -> Feishu/WeChat
+x_api_auto_task_xai_xml.py  v7.9 (多源融合终极版: 微信极简排版 + API轮换池)
+Architecture: Multi-Source Tracking (TWT+PPLX+Tavily) -> xAI SDK (XML) -> Feishu/WeChat
 """
 
 import os
@@ -28,17 +28,14 @@ SF_API_KEY          = os.getenv("SF_API_KEY", "")
 XAI_API_KEY         = os.getenv("XAI_API_KEY", "")    
 IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "") 
 
-# 新增外部情报 API Keys
 PPLX_API_KEY        = os.getenv("PPLX_API_KEY", "")
-TAVILY_API_KEY      = os.getenv("TAVILY_API_KEY", "")
 
-# 🚨 动态密钥池装载机制 (支持无限扩容小号)
+# 🚨 动态密钥池 1：RapidAPI Twitter 密钥池
 TWT_KEYS = []
 for i in range(1, 10):
     k = os.getenv(f"TWTAPI_KEY_{i}")
     if k and k.strip(): TWT_KEYS.append(k.strip())
 
-# 兼容旧版本主 Key
 legacy_key = os.getenv("TWTAPI_KEY", "")
 if legacy_key and legacy_key.strip() and legacy_key not in TWT_KEYS:
     TWT_KEYS.append(legacy_key.strip())
@@ -46,6 +43,16 @@ if legacy_key and legacy_key.strip() and legacy_key not in TWT_KEYS:
 def get_random_twt_key():
     if not TWT_KEYS: return ""
     return random.choice(TWT_KEYS)
+
+# 🚨 动态密钥池 2：Tavily 检索密钥池
+TAVILY_KEYS = []
+for suffix in ["", "_2", "_3", "_4", "_5"]:
+    tk = os.getenv(f"TAVILY_API_KEY{suffix}")
+    if tk and tk.strip(): TAVILY_KEYS.append(tk.strip())
+
+def get_random_tavily_key():
+    if not TAVILY_KEYS: return ""
+    return random.choice(TAVILY_KEYS)
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🚨 API 接口配置 🚨
@@ -62,7 +69,7 @@ def D(b64_str):
 URL_SF_IMAGE   = D("aHR0cHM6Ly9hcGkuc2lsaWNvbmZsb3cuY24vdjEvaW1hZ2VzL2dlbmVyYXRpb25z")
 URL_IMGBB      = D("aHR0cHM6Ly9hcGkuaW1nYmIuY29tLzEvdXBsb2Fk")
 
-# ── 单独拎出“巨鲸”账号（流量极其巨大的顶流，单独控制抓取粒度）
+# ── 单独拎出“巨鲸”账号
 WHALE_ACCOUNTS = [
     "elonmusk", "sama", "gregbrockman", "pmarca", "lexfridman"
 ]
@@ -177,14 +184,13 @@ def fetch_macro_with_perplexity() -> str:
     return ""
 
 def fetch_leaders_with_tavily(accounts: list) -> str:
-    """使用 Tavily 对领袖名单进行新闻聚合扫描"""
-    if not TAVILY_API_KEY:
+    """使用 Tavily 对领袖名单进行新闻聚合扫描 (支持轮换Key)"""
+    if not TAVILY_KEYS:
         print("⚠️ 未配置 TAVILY_API_KEY，跳过 Tavily 矩阵检索", flush=True)
         return ""
         
-    # 为了避免检索过多，最多取前 45 个人进行全网跨界检索
     track_list = accounts[:45]
-    print(f"\n🐦 [领袖盯盘员] 正在对 {len(track_list)} 位中外核心大佬进行 Tavily 无死角扫描...", flush=True)
+    print(f"\n🐦 [领袖盯盘员] 正在对 {len(track_list)} 位核心大佬进行 Tavily 无死角扫描...", flush=True)
 
     chunk_size = 15
     leader_chunks = [",".join(track_list[i:i + chunk_size]) for i in range(0, len(track_list), chunk_size)]
@@ -195,10 +201,12 @@ def fetch_leaders_with_tavily(accounts: list) -> str:
     aggregated_context = ""
 
     for i, chunk in enumerate(leader_chunks, 1):
-        print(f"  🔎 正在扫描第 {i}/{total_chunks} 组外部动态...", flush=True)
+        # 🚨 动态抽取 Tavily Key
+        current_tk = get_random_tavily_key()
+        print(f"  🔎 扫描第 {i}/{total_chunks} 组 (Tavily Key尾号: ...{current_tk[-4:]})...", flush=True)
         try:
             payload = {
-                "api_key": TAVILY_API_KEY,
+                "api_key": current_tk,
                 "query": f"Today's AI tech tweets/news from: {chunk}",
                 "search_depth": "advanced",
                 "topic": "news",
@@ -215,7 +223,7 @@ def fetch_leaders_with_tavily(accounts: list) -> str:
                 print(f"  ⚠️ 第 {i} 组检索失败: HTTP {response.status_code}", flush=True)
         except Exception as e:
             print(f"  ❌ 第 {i} 组抛出异常: {e}", flush=True)
-        time.sleep(1) # 避免并发限制
+        time.sleep(1.5) 
 
     if aggregated_context:
         print(f"  ✅ Tavily 矩阵检索完毕，获取高密度情报 {len(aggregated_context)} 字符。", flush=True)
@@ -549,7 +557,7 @@ def render_feishu_card(parsed_data: dict, today_str: str):
     elements.append({"tag": "hr"})
 
     if parsed_data["themes"]:
-        elements.append({"tag": "markdown", "content": "**▌ 🧠 深度叙事追踪 (Fusion)**"})
+        elements.append({"tag": "markdown", "content": "**▌ 🧠 深度叙事追踪**"})
         for idx, theme in enumerate(parsed_data["themes"]):
             theme_md = f"**{theme['emoji']} {theme['title']}**\n"
             
@@ -607,32 +615,46 @@ def render_feishu_card(parsed_data: dict, today_str: str):
         except Exception as e:
             print(f"[Push/Feishu] ERROR: {e}", flush=True)
 
+# 🚨 优化版微信排版 🚨
 def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
     html_lines = []
-    if cover_url: html_lines.append(f'<p style="text-align:center;margin:0 0 16px 0;"><img src="{cover_url}" style="max-width:100%;border-radius:8px;" /></p>')
+    
+    # 封面图
+    if cover_url: 
+        html_lines.append(f'<p style="text-align:center;margin:0 0 16px 0;"><img src="{cover_url}" style="max-width:100%;border-radius:8px;" /></p>')
+    
+    # Insight 模块优化：主标题融入 Insight 卡片，不再单独显示长串内容
     if parsed_data["cover"].get("insight"):
-        html_lines.append(f'<div style="border-radius:8px;background:#FFF7E6;padding:12px 14px;margin:0 0 20px 0;color:#d97706;"><div style="font-weight:bold;margin-bottom:6px;">💡 Insight | 昨晚硅谷在聊啥？</div><div>{parsed_data["cover"]["insight"]}</div></div>')
+        main_title = parsed_data["cover"].get("title", "")
+        header_text = f"💡 Insight | {main_title} | 昨晚硅谷在聊啥？" if main_title else "💡 Insight | 昨晚硅谷在聊啥？"
+        html_lines.append(f'<div style="border-radius:8px;background:#FFF7E6;padding:12px 14px;margin:0 0 20px 0;color:#d97706;"><div style="font-weight:bold;margin-bottom:6px;">{header_text}</div><div>{parsed_data["cover"]["insight"]}</div></div>')
 
     def make_h3(title): return f'<h3 style="margin:24px 0 12px 0;font-size:18px;border-left:4px solid #4A90E2;padding-left:10px;color:#2c3e50;font-weight:bold;">{title}</h3>'
     def make_quote(content): return f'<div style="background:#f8f9fa;border-left:4px solid #8c98a4;padding:10px 14px;color:#555;font-size:15px;border-radius:0 4px 4px 0;margin:6px 0 10px 0;line-height:1.6;">{content}</div>'
 
+    # 今日看板
     html_lines.append(make_h3("⚡️ 今日看板 (The Pulse)"))
     html_lines.append(make_quote(parsed_data.get('pulse', '')))
 
+    # 深度叙事追踪 (去除了 "多源融合版" 字样)
     if parsed_data["themes"]:
-        html_lines.append(make_h3("🧠 深度叙事追踪 (多源融合版)"))
+        html_lines.append(make_h3("🧠 深度叙事追踪"))
         for idx, theme in enumerate(parsed_data["themes"]):
+            # 主题标题
             html_lines.append(f'<p style="font-weight:bold;font-size:16px;color:#1e293b;margin:16px 0 8px 0;">{theme["emoji"]} {theme["title"]}</p>')
             
+            # 叙事转向/新叙事观察
             if theme.get("type") == "new":
                 html_lines.append(f'<div style="background:#f4f8fb; padding:10px 12px; border-radius:6px; margin:0 0 8px 0; font-size:14px; color:#2c3e50;"><strong>🔭 新叙事观察：</strong>{theme["narrative"]}</div>')
             else:
                 html_lines.append(f'<div style="background:#f4f8fb; padding:10px 12px; border-radius:6px; margin:0 0 8px 0; font-size:14px; color:#2c3e50;"><strong>💡 叙事转向：</strong>{theme["narrative"]}</div>')
                 
+            # 推文列表
             for t in theme["tweets"]:
                 html_lines.append(f'<p style="margin:8px 0 2px 0;font-size:14px;font-weight:bold;color:#2c3e50;">🗣️ @{t["account"]} <span style="color:#94a3b8;font-weight:normal;">| {t["role"]}</span></p>')
                 html_lines.append(make_quote(f'"{t["content"]}"'))
             
+            # 分析内容
             if theme.get("type") == "new":
                 if theme.get("outlook"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#eef2ff; padding: 8px 12px; border-radius: 4px;"><strong style="color:#4f46e5;">🔮 解读与展望：</strong>{theme["outlook"]}</p>')
                 if theme.get("opportunity"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#f0fdf4; padding: 8px 12px; border-radius: 4px;"><strong style="color:#16a34a;">🎯 潜在机会：</strong>{theme["opportunity"]}</p>')
@@ -641,13 +663,12 @@ def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
                 if theme.get("consensus"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#fff5f5; padding: 8px 12px; border-radius: 4px;"><strong style="color:#d35400;">🔥 核心共识：</strong>{theme["consensus"]}</p>')
                 if theme.get("divergence"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#fff5f5; padding: 8px 12px; border-radius: 4px;"><strong style="color:#d35400;">⚔️ 最大分歧：</strong>{theme["divergence"]}</p>')
             
-            if idx < len(parsed_data["themes"]) - 1:
-                html_lines.append('<hr style="border:none;border-top:1px dashed #cbd5e1;margin:24px 0;"/>')
+            # 删除各小主题之间的空行 (去掉了 append('<hr .../>') 或空白分隔)
 
     def make_list_section(title, items):
         if not items: return
         html_lines.append(make_h3(title))
-        for item in items:
+        for item in items: 
             html_lines.append(f'<p style="margin:10px 0;font-size:15px;line-height:1.6;">👉 <strong style="color:#2c3e50;">{item["category"]}：</strong><span style="color:#333;">{item["content"]}</span></p>')
 
     make_list_section("💰 资本与估值雷达 (Investment Radar)", parsed_data["investment_radar"])
@@ -658,8 +679,10 @@ def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
         for t in parsed_data["top_picks"]:
              html_lines.append(f'<p style="margin:12px 0 4px 0;font-size:14px;font-weight:bold;color:#2c3e50;">🗣️ @{t["account"]} <span style="color:#94a3b8;font-weight:normal;">| {t["role"]}</span></p>')
              html_lines.append(make_quote(f'"{t["content"]}"'))
+             # 不在这里添加额外的空行
 
-    return "<br/>".join(html_lines)
+    # 连接时不再使用 <br/> 作为分隔符，避免出现多余空行
+    return "".join(html_lines)
 
 
 def generate_cover_image(prompt):
@@ -701,9 +724,10 @@ def save_daily_data(today_str: str, post_objects: list, report_text: str):
 def main():
     print("=" * 60, flush=True)
     mode_str = "测试模式" if TEST_MODE else "全量模式"
-    print(f"昨晚硅谷在聊啥 v7.8 (多源融合版: RapidAPI + PPLX + Tavily - {mode_str})", flush=True)
+    print(f"昨晚硅谷在聊啥 v7.9 (多源融合终极版: 微信极简排版 + API轮换池 - {mode_str})", flush=True)
     print("=" * 60, flush=True)
-    print(f"🔑 成功装载 {len(TWT_KEYS)} 把 RapidAPI 密钥，准备进入轮换并发", flush=True)
+    print(f"🔑 成功装载 {len(TWT_KEYS)} 把 RapidAPI 密钥", flush=True)
+    print(f"🔑 成功装载 {len(TAVILY_KEYS)} 把 Tavily 检索密钥", flush=True)
 
     today_str, _ = get_dates()
     all_raw_tweets = []
@@ -796,7 +820,7 @@ def main():
                 push_to_jijyun(html_content, title=wechat_title, cover_url=cover_url)
                 
             save_daily_data(today_str, final_feed, xml_result)
-            print("\n🎉 V7.8 运行完毕！", flush=True)
+            print("\n🎉 V7.9 运行完毕！", flush=True)
         else:
             print("❌ LLM 处理失败，任务终止。")
 
