@@ -58,7 +58,7 @@ jobs:
           
           # 🚨 5. 微信多通道 推送 Webhooks
           JIJYUN_WEBHOOK_URL: ${{ secrets.JIJYUN_WEBHOOK_URL }}
-          OriSG_WEBHOOK_URL: ${{ secrets.OriSG_WEBHOOK_URL }}
+          # OriSG_WEBHOOK_URL: ${{ secrets.OriSG_WEBHOOK_URL }}
           OriCN_WEBHOOK_URL: ${{ secrets.OriCN_WEBHOOK_URL }}
           
           # 控制参数
