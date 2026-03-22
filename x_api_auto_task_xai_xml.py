@@ -646,7 +646,7 @@ def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
 def generate_cover_image(prompt):
     if not SF_API_KEY or not prompt: return ""
     try:
-        resp = requests.post(URL_SF_IMAGE, headers={"Authorization": f"Bearer {SF_API_KEY}", "Content-Type": "application/json"}, json={"model": "black-forest-labs/FLUX.1-schnell", "prompt": prompt, "n": 1, "image_size": "1024x576"}, timeout=60)
+        resp = requests.post(URL_SF_IMAGE, headers={"Authorization": f"Bearer {SF_API_KEY}", "Content-Type": "application/json"}, json={"model": "Kwai-Kolors/Kolors", "prompt": prompt, "n": 1, "image_size": "1024x576"}, timeout=60)
         if resp.status_code == 200: return resp.json().get("images", [{}])[0].get("url") or resp.json().get("data", [{}])[0].get("url")
     except: pass
     return ""
