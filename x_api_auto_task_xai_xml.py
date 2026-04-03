@@ -654,7 +654,11 @@ def main():
     for item in sorted(final_feed, key=lambda x: x["score"], reverse=True)[:10]:
         replies_data = fetch_tweet_replies(item["tweet_id"], item["a"])
         if replies_data:
-            reply_strs = [f"[神回复 @{r['screen_name']}]: {re.sub(r'https?://\S+', '', r.get('text', '')).strip()[:150]} (❤️ {r.get('favorites', 0)})" for r in replies_data]
+            reply_strs = []
+            for r in replies_data:
+                # 🚨 修复语法错误：将带有反斜杠的正则运算提取到 f-string 之外
+                clean_reply_text = re.sub(r'https?://\S+', '', r.get('text', '')).strip()[:150]
+                reply_strs.append(f"[神回复 @{r['screen_name']}]: {clean_reply_text} (❤️ {r.get('favorites', 0)})")
             item["s"] += "\n\n" + "\n".join(reply_strs)
         time.sleep(1)
 
