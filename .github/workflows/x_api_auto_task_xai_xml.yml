@@ -1,8 +1,8 @@
-name: Global Chinese Tech & AI Daily (v10.5)
+name: Global Chinese Tech & AI Daily (v10.6)
 
 on:
   # 每天定时执行 (UTC时间 00:00，对应北京时间早上 08:00)
-  #schedule:
+  # schedule:
    # - cron: '0 0 * * *'
   
   # 允许在 GitHub Actions 页面手动点击运行，并支持传入测试参数
@@ -13,6 +13,10 @@ on:
         required: false
         type: boolean
         default: false
+
+# 🚨 极其重要：必须赋予写入权限，否则最后一步的 git push 会报错拒绝访问
+permissions:
+  contents: write
 
 jobs:
   build-and-run:
@@ -31,7 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           
-          # V10.5 极简高效的 API 架构依赖
+          # V10.6 极简高效的 API 架构依赖
           pip install requests xai-sdk
           
       - name: Run Auto Task Script
@@ -70,13 +74,15 @@ jobs:
           # 确保这里执行的文件名与你仓库里的 Python 主程序文件名完全一致！
           python x_api_auto_task_xai_xml.py
 
-      # 🚨 新增：执行完任务后，强制让云端机器把数据写入并保存到你的 GitHub 仓库中
-      - name: Commit and Push Daily Stats
+      # 🚨 新增：执行完任务后，强制让云端机器把记忆库和报表写入并保存到你的 GitHub 仓库中
+      - name: Commit and Push Daily Stats and Memory
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add data/account_stats.json || true
-          git commit -m "Auto-save daily account stats" || echo "No changes to commit"
+          
+          # 把动态记忆库、账号统计数据，以及可能发生变动的名单一并保存
+          git add data/account_stats.json data/character_memory.json whales.txt experts.txt || true
+          git commit -m "🤖 Auto-save daily stats and memory bank" || echo "No changes to commit"
           git push
 
       - name: Upload Data Artifact
