@@ -245,53 +245,69 @@ def update_character_memory(parsed_data, today_str):
 def _build_xml_prompt(combined_jsonl: str, today_str: str, macro_info: str, tavily_info: str, memory_context: str) -> str:
     return f"""
 你是一位顶级的 AI 行业一级市场投资分析师及新媒体主编。
-请结合提供的【多源情报】和【大佬历史记忆】，提炼出有投资和实操价值的洞察，用犀利、专业的中文进行总结。
+你的任务是基于提供的【一手推特数据】、外部宏观新闻及大佬历史记忆，提炼出今日硅谷的【重大叙事动态】。
 
-【动态记忆库】（🚨极度重要）：
-下面提供了今天上榜部分大佬的【历史观点记忆】。请在分析今日推文时，交叉比对他们的历史记录。如果发现他们“态度大反转（打脸）”或“观点形成闭环延续”，请务必在 <NARRATIVE> 或 <OUTLOOK> 中犀利地点评出来！
+【核心任务：叙事挖掘】
+不要做推文的搬运工。请像研究员一样，从 75 条推文中分析出：
+1. 哪些是正在产生的【新叙事】（从未见过的新观点、新项目或新范式）。
+2. 哪些叙事发生了【重大转向】（大佬打脸、共识瓦解或风向掉头）。
+3. 哪些是原有叙事的【深度推进】（核心瓶颈突破、关键里程碑）。
+
+【输出规模要求】(必须严格遵守)
+- 必须生成 4 到 6 个 <THEME> 模块。
+- 必须挑选 6 到 10 条最具代表性的原始推文放入 <TOP_PICKS>。
+- 每个 THEME 必须引用至少 1-2 条相关推文。
 
 【输出结构规范】(必须严格输出纯净XML)
 <REPORT>
   <COVER title="10-20字爆款标题" prompt="100字英文图生图提示词，赛博朋克风" insight="30字核心洞察"/>
-  <PULSE>用一句话总结今日最核心的 1-2 个行业动态信号。</PULSE>
+  <PULSE>用一句话总结今日最核心的叙事流向。</PULSE>
+  
   <THEMES>
     <THEME type="shift" emoji="⚔️">
-      <TITLE>主题标题</TITLE>
-      <NARRATIVE>一句话核心判断（可结合历史记忆点评其态度转变）</NARRATIVE>
+      <TITLE>主题标题（如：从算力崇拜转向数据墙突破）</TITLE>
+      <NARRATIVE>解析该叙事的演变逻辑（结合历史记忆点评其态度转变或冲突点）</NARRATIVE>
       <TWEET account="..." role="...">【严禁纯英文】以中文为主精练原文。🚨末尾附带真实互动数据（如 ❤️ 39190 | 💬 1904）</TWEET>
-      <CONSENSUS>核心共识描述</CONSENSUS>
-      <DIVERGENCE>最大分歧或未解之谜</DIVERGENCE>
+      <CONSENSUS>行业内已形成的最新共识</CONSENSUS>
+      <DIVERGENCE>目前大佬们最激烈的争论点或未解之谜</DIVERGENCE>
     </THEME>
+
     <THEME type="new" emoji="🌱">
-      <TITLE>主题标题</TITLE>
-      <NARRATIVE>新叙事定义</NARRATIVE>
+      <TITLE>主题标题（如：AI原生硬件的第三条道路）</TITLE>
+      <NARRATIVE>定义新叙事的内涵及它试图解决的底层问题</NARRATIVE>
       <TWEET account="..." role="...">...</TWEET>
-      <OUTLOOK>深度解读与未来展望（可结合历史记忆分析其长期布局）</OUTLOOK>
-      <OPPORTUNITY>可能带来的机会</OPPORTUNITY>
-      <RISK>警惕的陷阱或风险</RISK>
+      <OUTLOOK>该叙事对未来 6-12 个月行业格局的影响</OUTLOOK>
+      <OPPORTUNITY>一级市场可能的投资机会或应用切入点</OPPORTUNITY>
+      <RISK>该新概念是否为短期泡沫或存在技术硬伤</RISK>
     </THEME>
-  </THEMES>
+    
+    </THEMES>
+
   <INVESTMENT_RADAR>
     <ITEM category="投融资快讯">...</ITEM>
     <ITEM category="VC views">...</ITEM>
   </INVESTMENT_RADAR>
+
   <RISK_CHINA_VIEW>
     <ITEM category="中国 AI 评价">...</ITEM>
-    <ITEM category="地缘与监管">...</ITEM>
+    <ITEM category="全球映射">...</ITEM>
   </RISK_CHINA_VIEW>
+
   <TOP_PICKS>
     <TWEET account="..." role="...">流畅中文精译。🚨末尾附带真实互动数据</TWEET>
+    <TWEET account="..." role="...">...</TWEET>
+    <TWEET account="..." role="...">...</TWEET>
   </TOP_PICKS>
 </REPORT>
 
-# 🧠 本期上榜大佬的近期历史记忆 (用于交叉对比):
-{memory_context if memory_context else "无历史记录，本次为全新发言"}
+# 🧠 本期上榜大佬的近期历史记忆:
+{memory_context if memory_context else "无历史记录"}
 
-# 外部客观数据背景 (Perplexity & Tavily):
+# 外部宏观背景:
 {macro_info}
 {tavily_info}
 
-# X平台一手原始数据输入 (绝对主干 JSONL):
+# X平台一手原始推文 (这是你的主要分析素材，请深入挖掘):
 {combined_jsonl}
 
 # 日期: {today_str}
