@@ -6,12 +6,17 @@ from datetime import datetime, timezone, timedelta
 import requests
 
 # ==========================================
-# 1. 核心配置与 106 人大名单
+# 1. 核心配置与渠道
 # ==========================================
-API_KEY = "new1_94023baadd1942f6badf5b8ef7e12c0d"
-BASE_URL = "https://api.twitterapi.io"
+API_KEY = os.getenv("twitterapi_io_KEY")
+XAI_API_KEY = os.getenv("XAI_API_KEY")
 
-# 严格的 24 小时时间窗 (UTC)
+FEISHU_TEST_URL = os.getenv("FEISHU_WEBHOOK_URL")
+FEISHU_MAIN_URL = os.getenv("FEISHU_WEBHOOK_URL_1")
+JIJYUN_URL = os.getenv("JIJYUN_WEBHOOK_URL")
+TEST_MODE = os.getenv("TEST_MODE_ENV", "false").lower() == "true"
+
+BASE_URL = "https://api.twitterapi.io"
 NOW_UTC = datetime.now(timezone.utc)
 SINCE_24H = NOW_UTC - timedelta(days=1)
 SINCE_TS = int(SINCE_24H.timestamp())
@@ -19,53 +24,34 @@ SINCE_DATE_STR = SINCE_24H.strftime("%Y-%m-%d")
 
 AI_KEYWORDS = ["ai", "llm", "agent", "model", "gpt", "release", "inference", "open-source", "agi", "claude", "openai"]
 
-TARGET_ACCOUNTS = [
-    "elonmusk", "sama", "gregbrockman", "pmarca", "lexfridman",
-    "karpathy", "demishassabis", "darioamodei", "OpenAI", "AnthropicAI", 
-    "GoogleDeepMind", "xAI", "AIatMeta", "GoogleAI", "MSFTResearch", 
-    "IlyaSutskever", "GaryMarcus", "rowancheung", "clmcleod", "bindureddy", 
-    "dotey", "oran_ge", "vista8", "imxiaohu", "Sxsyer", 
-    "K_O_D_A_D_A", "tualatrix", "linyunqiu", "garywong", "web3buidl", 
-    "AI_Era", "AIGC_News", "jiangjiang", "hw_star", "mranti", 
-    "nishuang", "a16z", "ycombinator", "lightspeedvp", "sequoia", 
-    "foundersfund", "eladgil", "bchesky", "chamath", "paulg", 
-    "TheInformation", "TechCrunch", "verge", "WIRED", "Scobleizer", 
-    "bentossell", "HuggingFace", "MistralAI", "Perplexity_AI", "GroqInc", 
-    "Cohere", "TogetherCompute", "runwayml", "Midjourney", "StabilityAI", 
-    "Scale_AI", "CerebrasSystems", "tenstorrent", "weights_biases", "langchainai", 
-    "llama_index", "supabase", "vllm_project", "huggingface_hub", "nvidia", 
-    "AMD", "Intel", "SKhynix", "tsmc", "magicleap", 
-    "NathieVR", "PalmerLuckey", "ID_AA_Carmack", "boz", "rabovitz", 
-    "htcvive", "XREAL_Global", "RayBan", "MetaQuestVR", "PatrickMoorhead", 
-    "jeffdean", "chrmanning", "hardmaru", "goodfellow_ian", "feifeili", 
-    "_akhaliq", "promptengineer", "AI_News_Tech", "siliconvalley", "aithread", 
-    "aibreakdown", "aiexplained", "aipubcast", "hubermanlab", "swyx",
-    "Dylan522p", "lilianweng", "JohnSchulman2", "nottombrown", "simonw", "soumithchintala"
-]
-
 def normalize(name):
     return name.replace("@", "").strip().lower()
 
-TARGET_SET = {normalize(acc) for acc in TARGET_ACCOUNTS}
+# ==========================================
+# 2. 动态读取名单
+# ==========================================
+def load_dynamic_targets():
+    accounts = set()
+    for filename in ["whales.txt", "experts.txt"]:
+        if os.path.exists(filename):
+            with open(filename, "r", encoding="utf-8") as f:
+                for line in f:
+                    u = normalize(line)
+                    if u and not u.startswith("#"): accounts.add(u)
+    return accounts
+
+TARGET_SET = load_dynamic_targets()
 
 # ==========================================
-# 2. 核心清洗函数 (基于你的探针结果)
+# 3. 核心清洗与打分
 # ==========================================
 def unify_schema(t):
-    """
-    针对 twitterapi.io 真实返回的字段名进行提取
-    顶层字段: ['id', 'text', 'likeCount', 'replyCount', 'createdAt', 'author'...]
-    """
     author_obj = t.get("author", {})
     author_handle = normalize(author_obj.get("userName", "unknown"))
-    
-    # 提取时间并转为 timestamp
     created_at = t.get("createdAt", "")
     try:
-        # 兼容 ISO 格式 "2026-04-03T20:00:00.000Z"
         created_ts = datetime.fromisoformat(created_at.replace('Z', '+00:00')).timestamp()
-    except:
-        created_ts = 0
+    except: created_ts = 0
 
     return {
         "id": str(t.get("id", "None")),
@@ -75,14 +61,11 @@ def unify_schema(t):
         "likes": int(t.get("likeCount", 0)),
         "replies": int(t.get("replyCount", 0)),
         "quotes": int(t.get("quoteCount", 0)),
-        "is_reply": bool(t.get("isReply")),
         "deep_replies": []
     }
 
 def score_and_filter(tweets):
-    print("\n🧠 [Processing] 执行去重、打分与单人限流...")
     unique_tweets = {}
-    
     for t in tweets:
         t_id = t["id"]
         if not t_id or t_id == "None": continue
@@ -90,109 +73,146 @@ def score_and_filter(tweets):
             
         score = t["likes"] * 1.0 + t["replies"] * 2.0 + t["quotes"] * 3.0
         text_lower = t["text"].lower()
-        
-        # 权重加成
         if t["author"] in TARGET_SET: score += 50
         if any(kw in text_lower for kw in AI_KEYWORDS): score += 30
         
-        # --- 🚨 强化版惩罚机制 (解决群聊噪音) ---
-        # 1. 过滤掉 @ 符号和 URL 后的纯文本长度
-        clean_text = re.sub(r'https?://\S+', '', text_lower)
-        clean_text = re.sub(r'@\w+', '', clean_text).strip()
-        
+        # 降噪：过滤纯长度 & 严惩群聊
+        clean_text = re.sub(r'https?://\S+|@\w+', '', text_lower).strip()
         if len(clean_text) < 15: score -= 50
-        
-        # 2. 如果推文里 @ 的人数超过 5 个，极大概率是垃圾群聊，重罚
         if t["text"].count('@') > 5: score -= 100
             
         t["score"] = max(0, score)
-        
-        # 仅保留正分或点赞极高的
-        if t["score"] > 0 or t["likes"] > 15:
-            unique_tweets[t_id] = t
+        if t["score"] > 0 or t["likes"] > 15: unique_tweets[t_id] = t
             
-    # 单人限流与最终排序
     scored_list = sorted(unique_tweets.values(), key=lambda x: x["score"], reverse=True)
-    
     author_counts = {}
     final_capped = []
     for t in scored_list:
-        if author_counts.get(t["author"], 0) < 3:
+        if author_counts.get(t["author"], 0) < 3: # 防止单人刷屏
             final_capped.append(t)
             author_counts[t["author"]] = author_counts.get(t["author"], 0) + 1
             
-    return final_capped[:20]
+    return final_capped[:75] # 扩大漏斗，总共保留 Top 75
 
 # ==========================================
-# 3. 网络请求模块 (保持 Stage 1, 2, 3 逻辑)
+# 4. Grok 分析与推送分发模块
 # ==========================================
-def safe_request(endpoint, params):
-    url = f"{BASE_URL}{endpoint}"
+def analyze_with_grok(feed_text):
+    print("\n🧠 正在呼叫 Grok (xAI) 进行深度研报分析...")
+    if not XAI_API_KEY:
+        return "❌ 无法生成分析报告：未找到 XAI_API_KEY 环境变量。"
+
+    system_prompt = """你是一个专注硅谷前沿AI科技的一级市场VC合伙人。
+请根据提供的推特动态（分为具有深度评论的Tier 1和提供宏观背景的Tier 2），写一份不超过800字的情报分析报告。
+要求：
+1. 一针见血，少说废话，不要复述推文。
+2. 重点提炼“圈内新共识”、“底层技术分歧”和“早期投资信号”。
+3. 语气专业、犀利。使用Markdown格式排版。"""
+
+    headers = {
+        "Authorization": f"Bearer {XAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": "grok-beta",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"以下是过去24小时的高价值推特情报：\n\n{feed_text}"}
+        ],
+        "temperature": 0.4
+    }
+
     try:
-        resp = requests.get(url, headers={"X-API-Key": API_KEY}, params=params, timeout=20)
-        if resp.status_code == 200: return resp.json()
-        print(f"  [API Error] {resp.status_code}")
+        resp = requests.post("https://api.x.ai/v1/chat/completions", headers=headers, json=payload, timeout=60)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        print(f"  [Network Error] {e}")
-    return None
+        print(f"❌ Grok API 调用失败: {e}")
+        return f"❌ Grok 生成报告失败。\n抓取的原始数据已保存。\n错误信息: {e}"
 
-def fetch_pipeline():
+def push_to_channels(content):
+    if not content.strip(): return
+    webhook_url = FEISHU_TEST_URL if TEST_MODE else FEISHU_MAIN_URL
+    if webhook_url:
+        print(f"📡 正在推送分析报告至飞书 ({'测试模式' if TEST_MODE else '正式模式'})...")
+        payload = {"msg_type": "post", "content": {"post": {"zh_cn": {
+            "title": "🤖 硅谷 AI 叙事动态 (Grok 提炼版)",
+            "content": [[{"tag": "text", "text": content}]]
+        }}}}
+        requests.post(webhook_url, json=payload)
+    if JIJYUN_URL:
+        print("📡 正在推送分析报告至微信通道...")
+        requests.post(JIJYUN_URL, json={"content": content[:2000]})
+
+# ==========================================
+# 5. 主程序
+# ==========================================
+def main():
+    if not API_KEY or not TARGET_SET:
+        print("❌ 错误: 未配置 API KEY 或本地名单为空"); return
+
+    print(f"🚀 开始抓取 {len(TARGET_SET)} 位核心节点的最新动态...")
     all_raw = []
-    
-    # Stage 1: 原创
-    print("\n🚀 [Stage 1] 分组搜索原创...")
     acc_list = list(TARGET_SET)
     for i in range(0, len(acc_list), 15):
         chunk = acc_list[i:i+15]
-        query = "(" + " OR ".join([f"from:{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} -filter:retweets"
-        data = safe_request("/twitter/tweet/advanced_search", {"query": query, "queryType": "Latest"})
-        if data and "tweets" in data:
-            for t in data["tweets"]:
+        # 原创抓取
+        q1 = "(" + " OR ".join([f"from:{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} -filter:retweets"
+        d1 = requests.get(f"{BASE_URL}/twitter/tweet/advanced_search", headers={"X-API-Key": API_KEY}, params={"query": q1, "queryType": "Latest"}).json()
+        if d1 and d1.get("tweets"):
+            for t in d1["tweets"]:
+                ct = unify_schema(t)
+                if ct["created_ts"] >= SINCE_TS: all_raw.append(ct)
+                
+        # 外部高赞回响抓取
+        q2 = "(" + " OR ".join([f"@{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} min_faves:15 -filter:replies"
+        d2 = requests.get(f"{BASE_URL}/twitter/tweet/advanced_search", headers={"X-API-Key": API_KEY}, params={"query": q2, "queryType": "Top"}).json()
+        if d2 and d2.get("tweets"):
+            for t in d2["tweets"]:
                 ct = unify_schema(t)
                 if ct["created_ts"] >= SINCE_TS: all_raw.append(ct)
         time.sleep(1)
 
-    # Stage 2: 回响
-    print("\n📡 [Stage 2] 搜索高赞提及...")
-    for i in range(0, len(acc_list), 15):
-        chunk = acc_list[i:i+15]
-        query = "(" + " OR ".join([f"@{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} min_faves:15 -filter:replies"
-        data = safe_request("/twitter/tweet/advanced_search", {"query": query, "queryType": "Top"})
-        if data and "tweets" in data:
-            for t in data["tweets"]:
-                ct = unify_schema(t)
-                if ct["created_ts"] >= SINCE_TS: all_raw.append(ct)
-        time.sleep(1)
-
-    # 打分过滤
     top_feed = score_and_filter(all_raw)
-
-    # Stage 3: 钻取评论
-    print("\n⛏️ [Stage 3] 钻取前 10 条话题的深度评论...")
-    for t in top_feed[:10]:
-        data = safe_request("/twitter/tweet/replies", {"tweetId": t["id"]})
-        if data and "tweets" in data:
-            replies = [unify_schema(r) for r in data["tweets"]]
-            replies.sort(key=lambda x: x["likes"], reverse=True)
-            t["deep_replies"] = replies[:3]
-        time.sleep(1)
-        
-    return top_feed
-
-def main():
-    final_data = fetch_pipeline()
     
-    # 导出文件
-    print("\n💾 导出 clean_feed_for_llm.txt...")
-    with open("clean_feed_for_llm.txt", "w", encoding="utf-8") as f:
-        for t in final_data:
-            f.write(f"【{t['score']}分】 @{t['author']}: {t['text'].replace(chr(10), ' ')}\n")
-            f.write(f"   ❤️ {t['likes']} | 💬 {t['replies']}\n")
-            for r in t["deep_replies"]:
-                if r["text"].strip():
-                    f.write(f"   └─ [回响 @{r['author']} ❤️ {r['likes']}]: {r['text'].replace(chr(10), ' ')}\n")
-            f.write("\n")
-    print("✅ 任务完成！")
+    # 🎯 分层架构：Tier 1 (Top 15 带评论) vs Tier 2 (Next 60 纯文本)
+    tier_1 = top_feed[:15]
+    tier_2 = top_feed[15:75]
 
-if __name__ == "__main__":
-    main()
+    report_text = f"=== X AI Sector Watch ({SINCE_DATE_STR}) ===\n\n"
+    
+    report_text += "【Tier 1: 核心冲突与深度回响 (Top 15)】\n"
+    for t in tier_1:
+        # 对 Top 15 钻取深度评论
+        d3 = requests.get(f"{BASE_URL}/twitter/tweet/replies", headers={"X-API-Key": API_KEY}, params={"tweetId": t["id"]}).json()
+        if d3 and d3.get("tweets"):
+            replies = sorted([unify_schema(r) for r in d3["tweets"]], key=lambda x: x["likes"], reverse=True)
+            t["deep_replies"] = replies[:3]
+        
+        report_text += f"[评分:{t['score']}] @{t['author']}: {t['text'].replace(chr(10), ' ')}\n"
+        for r in t["deep_replies"]:
+            if r["text"].strip():
+                report_text += f"   └─ [高赞回响 @{r['author']}]: {r['text'].replace(chr(10), ' ')}\n"
+        report_text += "\n"
+
+    report_text += "【Tier 2: 大盘风向标 (背景噪音)】\n"
+    for t in tier_2:
+        report_text += f"@{t['author']}: {t['text'].replace(chr(10), ' ')}\n"
+
+    # 💾 落地保存为记忆账本与原始素材
+    os.makedirs("data", exist_ok=True)
+    with open("clean_feed_for_llm.txt", "w", encoding="utf-8") as f: 
+        f.write(report_text)
+        
+    daily_snapshot_name = f"data/memory_{SINCE_DATE_STR}.json"
+    with open(daily_snapshot_name, "w", encoding="utf-8") as f:
+        json.dump(top_feed, f, ensure_ascii=False, indent=2)
+
+    # 🧠 送给 Grok 分析并获取最终研报
+    final_report = analyze_with_grok(report_text)
+    
+    # 📡 推送大模型生成的专业研报
+    push_to_channels(final_report)
+    print("✅ 任务完美收官！")
+
+if __name__ == "__main__": main()
