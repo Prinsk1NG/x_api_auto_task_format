@@ -1,756 +1,1025 @@
 # -*- coding: utf-8 -*-
-"""
-x_api_auto_task_xai_xml.py  v14.1 (全链路监控 + 万能日期解析版)
-Architecture: TwitterAPI.io -> PPLX/Tavily -> xAI SDK (Reasoning) + Memory Bank
-"""
-
 import os
 import re
 import json
 import time
 import base64
-import random
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
 
 import requests
-from requests.exceptions import ConnectionError, Timeout
 
-# 🚨 引入官方 xAI SDK
-from xai_sdk import Client
-from xai_sdk.chat import user, system
+try:
+    from xai_sdk import Client
+    from xai_sdk.chat import user, system
+except Exception as e:
+    raise RuntimeError(
+        "xai-sdk 未正确安装。请确认 workflow 已执行: pip install --no-cache-dir xai-sdk"
+    ) from e
 
-TEST_MODE = os.getenv("TEST_MODE_ENV", "false").lower() == "true"
+# ==============================================================================
+# ENV
+# ==============================================================================
+TESTMODE = os.getenv("TEST_MODE_ENV", "false").lower() == "true"
 
-# ── 环境变量配置 ──────────────────────────────
-SF_API_KEY          = os.getenv("SF_API_KEY", "")
-XAI_API_KEY         = os.getenv("XAI_API_KEY", "")    
-IMGBB_API_KEY       = os.getenv("IMGBB_API_KEY", "") 
+FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "").strip()
+FEISHU_WEBHOOK_URL_1 = os.getenv("FEISHU_WEBHOOK_URL_1", "").strip()
+WECHAT_WEBHOOK_URL = os.getenv("WECHAT_WEBHOOK_URL", "").strip()
+WECHAT_WEBHOOK_URL_1 = os.getenv("WECHAT_WEBHOOK_URL_1", "").strip()
+JIJYUN_WEBHOOK_URL = os.getenv("JIJYUN_WEBHOOK_URL", "").strip()
+ORISG_WEBHOOK_URL = os.getenv("ORISG_WEBHOOK_URL", "").strip()
+ORICN_WEBHOOK_URL = os.getenv("ORICN_WEBHOOK_URL", "").strip()
 
-PPLX_API_KEY        = os.getenv("PPLX_API_KEY", "")
-TWITTERAPI_IO_KEY   = os.getenv("twitterapi_io_KEY", "")
+TWITTERAPI_IO_KEY = os.getenv("TWITTERAPI_IO_KEY", "").strip()
+XAI_API_KEY = os.getenv("XAI_API_KEY", "").strip()
+PPLX_API_KEY = os.getenv("PPLX_API_KEY", "").strip() or os.getenv("PERPLEXITY_API_KEY", "").strip()
+SF_API_KEY = os.getenv("SF_API_KEY", "").strip()
+IMGBB_API_KEY = os.getenv("IMGBB_API_KEY", "").strip()
 
-TAVILY_KEYS = []
-for suffix in ["", "_2", "_3", "_4", "_5"]:
-    tk = os.getenv(f"TAVILY_API_KEY{suffix}")
-    if tk and tk.strip(): TAVILY_KEYS.append(tk.strip())
+# backward-compatible aliases for older names inside historical code blocks
+TWITTERAPIIOKEY = TWITTERAPI_IO_KEY
+XAIAPIKEY = XAI_API_KEY
+PPLXAPIKEY = PPLX_API_KEY
+SFAPIKEY = SF_API_KEY
+IMGBBAPIKEY = IMGBB_API_KEY
 
-def get_random_tavily_key():
-    if not TAVILY_KEYS: return ""
-    return random.choice(TAVILY_KEYS)
-
-def D(b64_str):
-    return base64.b64decode(b64_str).decode("utf-8")
-
-URL_SF_IMAGE   = D("aHR0cHM6Ly9hcGkuc2lsaWNvbmZsb3cuY24vdjEvaW1hZ2VzL2dlbmVyYXRpb25z")
-URL_IMGBB      = D("aHR0cHM6Ly9hcGkuaW1nYmIuY29tLzEvdXBsb2Fk")
-
-# ── 基础配置与时间窗 ──────────────────────────────
+# ==============================================================================
+# CONSTANTS
+# ==============================================================================
 BASE_URL = "https://api.twitterapi.io"
+URL_SF_IMAGE = "https://api.siliconflow.cn/v1/images/generations"
+URL_IMGBB = "https://api.imgbb.com/1/upload"
+BJ_TZ = timezone(timedelta(hours=8))
 NOW_UTC = datetime.now(timezone.utc)
 SINCE_24H = NOW_UTC - timedelta(days=1)
 SINCE_TS = int(SINCE_24H.timestamp())
 SINCE_DATE_STR = SINCE_24H.strftime("%Y-%m-%d")
 
-# 🚨 动态读取外部名单系统
-def load_account_list(filename):
-    if not os.path.exists(filename): return []
-    with open(filename, "r", encoding="utf-8") as f:
-        return [line.strip().replace("@", "").lower() for line in f if line.strip() and not line.strip().startswith("#")]
+MIN_REPLY_LIKES = 8
+MIN_REPLY_LEN = 24
+MAX_DEEP_REPLIES_PER_TWEET = 3
+REPORT_POOL_LIMIT = 75
+MEMORY_POOL_LIMIT = 20
+CHARACTER_MEMORY_MAX_PER_ACCOUNT = 5
+
+AI_CORE_KEYWORDS = {
+    "ai", "agent", "agents", "model", "models", "llm", "grok", "gemma", "gemini",
+    "claude", "openai", "anthropic", "xai", "nvidia", "huggingface", "inference",
+    "reasoning", "token", "tokens", "multimodal", "gpu", "chips", "chip", "robot",
+    "robots", "coding", "codegen", "rag", "retrieval", "codex", "benchmark", "training"
+}
+NON_AI_HOT_NOISE = {
+    "tesla", "fsd", "spacex", "starlink", "trump", "election", "ukraine",
+    "immigration", "border", "tariff"
+}
+TOXIC_PATTERNS = [
+    r"\bpedo\b", r"\bidiot\b", r"\bstupid\b", r"\bfuck\b", r"\bwtf\b",
+    r"\bscam\b", r"\bracist\b", r"\btrash\b", r"\bgarbage\b"
+]
+
+# ==============================================================================
+# HELPERS
+# ==============================================================================
+def today_and_yesterday():
+    now = datetime.now(BJ_TZ)
+    yesterday = now - timedelta(days=1)
+    return now.strftime("%Y-%m-%d"), yesterday.strftime("%Y-%m-%d")
+
+
+def norm_text(s: str) -> str:
+    return re.sub(r"\s+", " ", str(s or "")).strip()
+
+
+def safe_int(v):
+    try:
+        return int(float(v or 0))
+    except Exception:
+        return 0
+
+
+def load_account_list(filename: str):
+    path = Path(filename)
+    if not path.exists():
+        print(f"⚠️ [名单] 未找到文件: {filename}", flush=True)
+        return []
+    items = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        items.append(line.replace("@", "").lower())
+    print(f"✅ [名单] {filename}: {len(items)} 个账号", flush=True)
+    return items
+
 
 WHALE_ACCOUNTS = load_account_list("whales.txt")
 EXPERT_ACCOUNTS = load_account_list("experts.txt")
-
-if TEST_MODE:
+if TESTMODE:
     WHALE_ACCOUNTS = WHALE_ACCOUNTS[:2]
     EXPERT_ACCOUNTS = EXPERT_ACCOUNTS[:4]
-
 TARGET_SET = set(WHALE_ACCOUNTS + EXPERT_ACCOUNTS)
 
-# ── 渠道分发逻辑 ──────────────────────────────
-def get_feishu_webhooks() -> list:
+
+def is_target_account(acc: str) -> bool:
+    return (acc or "").replace("@", "").lower() in TARGET_SET
+
+
+def get_feishu_webhooks():
     urls = []
-    if TEST_MODE:
-        url = os.getenv("FEISHU_WEBHOOK_URL", "")
-        if url: urls.append(url)
+    if TESTMODE:
+        if FEISHU_WEBHOOK_URL:
+            urls.append(FEISHU_WEBHOOK_URL)
     else:
-        for suffix in ["", "_1", "_2", "_3"]:
-            url = os.getenv(f"FEISHU_WEBHOOK_URL{suffix}", "")
-            if url: urls.append(url)
+        if FEISHU_WEBHOOK_URL_1:
+            urls.append(FEISHU_WEBHOOK_URL_1)
     return urls
 
-def get_wechat_webhooks() -> list:
+
+def get_wechat_webhooks():
     urls = []
-    for key in ["JIJYUN_WEBHOOK_URL", "OriSG_WEBHOOK_URL", "OriCN_WEBHOOK_URL"]:
-        url = os.getenv(key, "")
-        if url: urls.append(url)
+    if TESTMODE:
+        if WECHAT_WEBHOOK_URL:
+            urls.append(WECHAT_WEBHOOK_URL)
+    else:
+        for url in [WECHAT_WEBHOOK_URL_1, JIJYUN_WEBHOOK_URL, ORISG_WEBHOOK_URL, ORICN_WEBHOOK_URL]:
+            if url:
+                urls.append(url)
     return urls
 
-def get_dates() -> tuple:
-    tz = timezone(timedelta(hours=8))
-    today = datetime.now(tz)
-    yesterday = today - timedelta(days=1)
-    return today.strftime("%Y-%m-%d"), yesterday.strftime("%Y-%m-%d")
+
+def _twitter_headers():
+    return {"X-API-Key": TWITTERAPI_IO_KEY}
 
 
-# ==============================================================================
-# 🎯 V14.1 万能数据清洗与打分引擎
-# ==============================================================================
-AI_KEYWORDS = ["ai", "llm", "agent", "model", "gpt", "release", "inference", "open-source", "agi", "claude", "openai"]
-
-def unify_schema(t):
+def unify_tweet_schema(t: dict):
     author_obj = t.get("author", {})
     if isinstance(author_obj, str):
         author_handle = author_obj
     else:
-        author_handle = author_obj.get("userName", "unknown")
+        author_handle = author_obj.get("userName") or author_obj.get("screen_name") or author_obj.get("username") or "unknown"
     author_handle = author_handle.replace("@", "").strip().lower()
 
-    # 🚨 极其关键的万能日期解析机制
-    created_at = t.get("createdAt", t.get("created_at", ""))
+    created_at = t.get("createdAt") or t.get("created_at") or t.get("createdat") or ""
     created_ts = 0
     if created_at:
         try:
-            # 格式 1: ISO 标准 (2023-10-10T20:19:24.000Z)
-            created_ts = datetime.fromisoformat(created_at.replace('Z', '+00:00')).timestamp()
+            created_ts = int(datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp())
         except Exception:
             try:
-                # 格式 2: Twitter 原生格式 (Thu Apr 06 15:28:43 +0000 2023)
-                created_ts = datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y").timestamp()
+                created_ts = int(datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y").timestamp())
             except Exception:
-                print(f"⚠️ [日期解析失败] 碰到未知时间格式，该推文可能会被丢弃: {created_at}", flush=True)
+                created_ts = 0
 
     return {
-        "id": str(t.get("id", t.get("tweet_id", "None"))),
-        "text": t.get("text", t.get("full_text", "")),
+        "id": str(t.get("id") or t.get("tweetId") or t.get("rest_id") or "").strip(),
+        "text": norm_text(t.get("text") or t.get("full_text") or t.get("fullText") or ""),
         "author": author_handle,
         "created_ts": created_ts,
-        "likes": int(t.get("likeCount", t.get("favorite_count", 0))),
-        "replies": int(t.get("replyCount", t.get("reply_count", 0))),
-        "quotes": int(t.get("quoteCount", t.get("quote_count", 0))),
-        "deep_replies": []
+        "likes": safe_int(t.get("likeCount") or t.get("favorite_count") or t.get("favoriteCount")),
+        "replies": safe_int(t.get("replyCount") or t.get("reply_count")),
+        "quotes": safe_int(t.get("quoteCount") or t.get("quote_count")),
+        "deep_replies": [],
     }
 
-def score_and_filter(tweets):
-    unique_tweets = {}
-    for t in tweets:
-        t_id = t["id"]
-        if not t_id or t_id == "None": continue
-        if t_id in unique_tweets: continue
-            
-        score = t["likes"] * 1.0 + t["replies"] * 2.0 + t["quotes"] * 3.0
-        text_lower = t["text"].lower()
-        if t["author"] in WHALE_ACCOUNTS: score += 500
-        elif t["author"] in EXPERT_ACCOUNTS: score += 50
-        
-        if any(kw in text_lower for kw in AI_KEYWORDS): score += 300
-        
-        clean_text = re.sub(r'https?://\S+|@\w+', '', text_lower).strip()
-        if len(clean_text) < 15: score -= 500
-        if t["text"].count('@') > 5: score -= 1000
-            
-        t["score"] = max(0, score)
-        if t["score"] > 0 or t["likes"] > 15: unique_tweets[t_id] = t
-            
-    scored_list = sorted(unique_tweets.values(), key=lambda x: x["score"], reverse=True)
-    author_counts = {}
-    final_capped = []
-    for t in scored_list:
-        if author_counts.get(t["author"], 0) < 3: 
-            final_capped.append(t)
-            author_counts[t["author"]] = author_counts.get(t["author"], 0) + 1
-            
-    return final_capped
 
-# ==============================================================================
-# 🧩 宏观数据辅助 (带详细监控探针)
-# ==============================================================================
-def fetch_macro_with_perplexity() -> str:
-    if not PPLX_API_KEY: return ""
-    print("\n🕵️ [Perplexity] 呼叫 PPLX 获取宏观数据...", flush=True)
-    try:
-        prompt = """你是顶级 AI 行业分析师。请仅检索过去 24 小时内 AI 行业的【硬核客观数据】。只抓取：1. 具体的融资金额与并购案。2. GitHub上刚发布的AI开源项目或硬件。绝对禁止将Perplexity作为来源。"""
-        headers = {"Authorization": f"Bearer {PPLX_API_KEY}", "Content-Type": "application/json"}
-        payload = {"model": "sonar-pro", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
-        resp = requests.post("https://api.perplexity.ai/chat/completions", headers=headers, json=payload, timeout=60)
-        
-        if resp.status_code == 200:
-            data = resp.json()["choices"][0]["message"]["content"]
-            print(f"  ✅ Perplexity 收集完毕 ({len(data)} 字)", flush=True)
-            return data
-        else:
-            print(f"  ⚠️ [Perplexity 报错] 状态码: {resp.status_code}, 详情: {resp.text}", flush=True)
-    except Exception as e: 
-        print(f"  ⚠️ [Perplexity 异常] 网络断开或超时: {e}", flush=True)
-    return ""
+def fetch_advanced_search_pages(query: str, query_type: str = "Latest", max_pages: int = 2):
+    if not TWITTERAPI_IO_KEY:
+        return []
+    results = []
+    seen_ids = set()
+    cursor = None
+    for _ in range(max_pages):
+        params = {"query": query, "queryType": query_type}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/twitter/tweet/advanced_search",
+                headers=_twitter_headers(),
+                params=params,
+                timeout=25,
+            )
+            if resp.status_code != 200:
+                print(f"⚠️ [TwitterAPI] advanced_search HTTP {resp.status_code}: {resp.text[:200]}", flush=True)
+                break
+            data = resp.json() or {}
+            tweets = data.get("tweets") or []
+            if not tweets:
+                break
+            for t in tweets:
+                ct = unify_tweet_schema(t)
+                if not ct["id"] or ct["id"] in seen_ids:
+                    continue
+                seen_ids.add(ct["id"])
+                if ct["created_ts"] >= SINCE_TS:
+                    results.append(ct)
+            cursor = data.get("nextCursor") or data.get("next_cursor")
+            if not (data.get("hasNextPage") or data.get("has_next_page")) or not cursor:
+                break
+            time.sleep(0.8)
+        except Exception as e:
+            print(f"⚠️ [TwitterAPI] advanced_search 异常: {e}", flush=True)
+            break
+    return results
 
-def fetch_global_news_with_tavily() -> str:
-    if not TAVILY_KEYS: return ""
-    print(f"\n🌍 [Tavily] 扫描全网 AI 热点...", flush=True)
-    try:
-        url = "https://api.tavily.com/search"
-        headers = {"Content-Type": "application/json"}
-        payload = {"api_key": get_random_tavily_key(), "query": "AI startup funding, mergers and acquisitions, new AI hardware releases, and trending open-source AI GitHub projects globally in the last 24 hours", "search_depth": "advanced", "topic": "news", "days": 1, "include_answer": True}
-        resp = requests.post(url, json=payload, headers=headers, timeout=45)
-        
-        if resp.status_code == 200:
-            data = resp.json()
-            print("  ✅ Tavily 扫描完毕。", flush=True)
-            return f"### [Tavily 全网客观数据]\n" + data.get("answer", "")
-        else:
-            print(f"  ⚠️ [Tavily 报错] 状态码: {resp.status_code}, 详情: {resp.text}", flush=True)
-    except Exception as e: 
-        print(f"  ⚠️ [Tavily 异常] 网络断开或超时: {e}", flush=True)
-    return ""
 
-# ==============================================================================
-# 🧠 动态记忆库模块 (Memory Bank)
-# ==============================================================================
-MEMORY_FILE = Path("data/character_memory.json")
+def fetch_reply_pages(tweet_id: str, max_pages: int = 2):
+    if not TWITTERAPI_IO_KEY or not tweet_id:
+        return []
+    reply_map = {}
+    cursor = None
+    for _ in range(max_pages):
+        params = {"tweetId": tweet_id}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            resp = requests.get(
+                f"{BASE_URL}/twitter/tweet/replies",
+                headers=_twitter_headers(),
+                params=params,
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                break
+            data = resp.json() or {}
+            tweets = data.get("tweets") or []
+            if not tweets:
+                break
+            for r in tweets:
+                rr = unify_tweet_schema(r)
+                if rr["id"] and rr["id"] not in reply_map:
+                    reply_map[rr["id"]] = rr
+            cursor = data.get("nextCursor") or data.get("next_cursor")
+            if not (data.get("hasNextPage") or data.get("has_next_page")) or not cursor:
+                break
+            time.sleep(0.6)
+        except Exception:
+            break
+    return sorted(reply_map.values(), key=lambda x: (x["likes"], x["replies"]), reverse=True)
+
+
+def contains_ai_signal(text: str) -> bool:
+    low = norm_text(text).lower()
+    return any(k in low for k in AI_CORE_KEYWORDS)
+
+
+def non_ai_noise_hits(text: str) -> int:
+    low = norm_text(text).lower()
+    return sum(1 for k in NON_AI_HOT_NOISE if k in low)
+
+
+def looks_toxic_or_empty(text: str) -> bool:
+    t = norm_text(text)
+    if len(t) < MIN_REPLY_LEN:
+        return True
+    if re.fullmatch(r"[@\w\s\.\!\?\,\-:;]+", t) and len(t.split()) <= 4:
+        return True
+    low = t.lower()
+    return any(re.search(p, low) for p in TOXIC_PATTERNS)
+
+
+def filter_deep_replies(replies: list):
+    clean = []
+    seen = set()
+    for r in replies or []:
+        text = norm_text(r.get("text", ""))
+        likes = safe_int(r.get("likes", 0))
+        author = (r.get("author", "") or "").lower()
+        if likes < MIN_REPLY_LIKES:
+            continue
+        if looks_toxic_or_empty(text):
+            continue
+        key = (author, text[:160].lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append({"author": r.get("author", ""), "likes": likes, "text": text})
+    clean.sort(key=lambda x: (x["likes"], len(x["text"])), reverse=True)
+    return clean[:MAX_DEEP_REPLIES_PER_TWEET]
+
+
+def apply_ai_relevance(post: dict) -> float:
+    text = norm_text(post.get("text", ""))
+    author = (post.get("author", "") or "").lower()
+    bonus = 0.0
+    if contains_ai_signal(text):
+        bonus += 180.0
+    if author in {"xai", "openai", "anthropicai", "googleai", "huggingface", "nvidia", "a16z", "pmarca"}:
+        bonus += 80.0
+    penalty = non_ai_noise_hits(text) * 120.0
+    if ("tesla" in text.lower() or "fsd" in text.lower()) and not contains_ai_signal(text):
+        penalty += 250.0
+    return bonus - penalty
+
+
+def score_and_filter(posts: list):
+    seen = set()
+    cleaned = []
+    for t in posts or []:
+        tid = str(t.get("id", "")).strip()
+        text = norm_text(t.get("text", ""))
+        if not tid or not text or tid in seen:
+            continue
+        seen.add(tid)
+        likes = safe_int(t.get("likes", 0))
+        replies = safe_int(t.get("replies", 0))
+        quotes = safe_int(t.get("quotes", 0))
+        base_score = likes + replies * 2 + quotes * 3
+        total_score = base_score + apply_ai_relevance(t)
+        if total_score < 300:
+            continue
+        t["score"] = round(total_score, 2)
+        t["source_type"] = "target" if is_target_account(t.get("author", "")) else "echo"
+        cleaned.append(t)
+    cleaned.sort(key=lambda x: x.get("score", 0), reverse=True)
+    return cleaned
+
 
 def load_memory():
-    if MEMORY_FILE.exists():
-        try:
-            with open(MEMORY_FILE, 'r', encoding='utf-8') as f: return json.load(f)
-        except: pass
-    return {}
+    memory_file = Path("data/character_memory.json")
+    if not memory_file.exists():
+        return {}
+    try:
+        return json.loads(memory_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
-def save_memory(memory_data):
-    MEMORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(MEMORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(memory_data, f, ensure_ascii=False, indent=2)
 
-def update_character_memory(parsed_data, today_str):
+def update_character_memory(parsed_data: dict, today_str: str):
+    memory_file = Path("data/character_memory.json")
     memory = load_memory()
-    count = 0
-    for theme in parsed_data.get('themes', []):
-        for tweet in theme.get('tweets', []):
-            acc = tweet.get('account', '').lower().replace('@', '')
-            content = tweet.get('content', '')
-            if not acc or not content: continue
-            
-            if acc not in memory: memory[acc] = []
-            new_entry = f"[{today_str}]: {content}"
-            if new_entry not in memory[acc]:
-                memory[acc].append(new_entry)
-                memory[acc] = memory[acc][-5:] 
-                count += 1
-    if count > 0:
-        save_memory(memory)
-        print(f"\n[Memory] 🧠 已更新 {count} 条历史记忆存入账本。", flush=True)
+    new_items = {}
+    for theme in parsed_data.get("themes", []):
+        title = norm_text(theme.get("title", ""))
+        for t in theme.get("tweets", []):
+            acc = (t.get("account", "") or "").replace("@", "").lower()
+            content = norm_text(t.get("content", ""))
+            if acc and content:
+                new_items.setdefault(acc, []).append(f"[{today_str}] {title}: {content}")
+    for t in parsed_data.get("top_picks", []):
+        acc = (t.get("account", "") or "").replace("@", "").lower()
+        content = norm_text(t.get("content", ""))
+        if acc and content:
+            new_items.setdefault(acc, []).append(f"[{today_str}] TOP_PICK: {content}")
+    for acc, items in new_items.items():
+        existing = memory.get(acc, [])
+        merged = []
+        seen = set()
+        for x in items + existing:
+            if x not in seen:
+                seen.add(x)
+                merged.append(x)
+        memory[acc] = merged[:CHARACTER_MEMORY_MAX_PER_ACCOUNT]
+    memory_file.parent.mkdir(parents=True, exist_ok=True)
+    memory_file.write_text(json.dumps(memory, ensure_ascii=False, indent=2), encoding="utf-8")
 
-# ==============================================================================
-# 🚀 xAI 大模型调用与 XML 提示词
-# ==============================================================================
-def _build_xml_prompt(combined_jsonl: str, today_str: str, macro_info: str, tavily_info: str, memory_context: str) -> str:
+
+def build_memory_candidates(parsed_data: dict):
+    candidates = []
+    for theme in parsed_data.get("themes", []):
+        title = norm_text(theme.get("title", ""))
+        consensus = norm_text(theme.get("consensus", ""))
+        divergence = norm_text(theme.get("divergence", ""))
+        for t in theme.get("tweets", []):
+            account = (t.get("account", "") or "").replace("@", "").lower()
+            content = norm_text(t.get("content", ""))
+            if account and content:
+                candidates.append({
+                    "account": account,
+                    "summary": content,
+                    "theme_title": title,
+                    "consensus": consensus,
+                    "divergence": divergence,
+                })
+        if divergence:
+            candidates.append({
+                "account": "_theme_divergence",
+                "summary": divergence,
+                "theme_title": title,
+                "consensus": consensus,
+                "divergence": divergence,
+            })
+    for t in parsed_data.get("top_picks", []):
+        account = (t.get("account", "") or "").replace("@", "").lower()
+        content = norm_text(t.get("content", ""))
+        if account and content:
+            candidates.append({
+                "account": account,
+                "summary": content,
+                "theme_title": "TOP_PICK",
+                "consensus": "",
+                "divergence": "",
+            })
+    seen = set()
+    uniq = []
+    for item in candidates:
+        key = (item["account"], item["summary"][:180])
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(item)
+    return uniq[:MEMORY_POOL_LIMIT]
+
+
+def save_memory_snapshot(today_str: str, memory_candidates: list):
+    data_dir = Path("data")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / f"memory_{today_str}.json").write_text(
+        json.dumps(memory_candidates, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def default_special_sections():
+    return (
+        [
+            {"category": "一级市场", "content": "暂无新增高置信投资线索，继续观察本地AI代理、推理基础设施、多模态生成三条线。"},
+            {"category": "二级市场", "content": "暂无新增高置信交易结论，维持对算力、推理成本、应用渗透率三项指标的跟踪。"},
+        ],
+        [
+            {"category": "中国 AI 最新动态", "content": "暂无外部补充成功，建议继续跟踪中国模型发布、算力供给、监管口径与应用落地。"},
+            {"category": "中美 AI 博弈与衍生风险", "content": "暂无外部补充成功，建议继续跟踪芯片限制、模型开源竞争、云服务与地缘监管外溢风险。"},
+        ],
+    )
+
+
+def _extract_json_object(text: str) -> dict:
+    text = (text or "").strip()
+    if not text:
+        return {}
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+    match = re.search(r"\{.*\}", text, flags=re.S)
+    if not match:
+        return {}
+    try:
+        return json.loads(match.group(0))
+    except Exception:
+        return {}
+
+
+def _normalize_special_section_items(items, fallback):
+    result = []
+    for item in items or []:
+        category = norm_text((item or {}).get("category", ""))
+        content = norm_text((item or {}).get("content", ""))
+        if category and content:
+            result.append({"category": category, "content": content})
+    return result or fallback
+
+
+def fetch_special_sections_with_perplexity(today_str: str):
+    default_investment_radar, default_risk_china_view = default_special_sections()
+    if not PPLX_API_KEY:
+        print("⚠️ [Perplexity] 未设置 API Key，使用默认外部栏目结构。", flush=True)
+        return default_investment_radar, default_risk_china_view
+    prompt = f"""
+今天是 {today_str}。你是AI行业观察员，请输出严格 JSON，不要 markdown，不要解释，不要代码块。
+目标：补充日报中的两个栏目，只保留高信息密度、与AI行业直接相关的内容。
+1) investment_radar：给出 2 条，类别只能是“一级市场”或“二级市场”。
+2) risk_china_view：必须给出 2 条，类别固定为“中国 AI 最新动态”和“中美 AI 博弈与衍生风险”。
+输出格式：
+{{
+  "investment_radar": [
+    {{"category": "一级市场", "content": "..."}},
+    {{"category": "二级市场", "content": "..."}}
+  ],
+  "risk_china_view": [
+    {{"category": "中国 AI 最新动态", "content": "..."}},
+    {{"category": "中美 AI 博弈与衍生风险", "content": "..."}}
+  ]
+}}
+""".strip()
+    try:
+        resp = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers={
+                "Authorization": f"Bearer {PPLX_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "sonar",
+                "messages": [
+                    {"role": "system", "content": "You are a concise research assistant that always returns valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.2,
+            },
+            timeout=60,
+        )
+        if resp.status_code != 200:
+            print(f"⚠️ [Perplexity] 状态码 {resp.status_code}，使用默认结构。", flush=True)
+            return default_investment_radar, default_risk_china_view
+        data = resp.json()
+        content = (((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "")
+        parsed = _extract_json_object(content)
+        investment_radar = _normalize_special_section_items(parsed.get("investment_radar"), default_investment_radar)
+        risk_china_view = _normalize_special_section_items(parsed.get("risk_china_view"), default_risk_china_view)
+        categories = {x["category"] for x in risk_china_view}
+        if "中国 AI 最新动态" not in categories or "中美 AI 博弈与衍生风险" not in categories:
+            risk_china_view = default_risk_china_view
+        return investment_radar, risk_china_view
+    except Exception as e:
+        print(f"⚠️ [Perplexity] 请求失败，使用默认结构: {e}", flush=True)
+        return default_investment_radar, default_risk_china_view
+
+
+def build_xml_prompt(combined_jsonl: str, today_str: str, memory_context: str) -> str:
     return f"""
-你是一位顶级的 AI 行业一级市场投资分析师及新媒体主编。
-你的任务是基于提供的【一手推特数据】、外部宏观新闻及大佬历史记忆，提炼出今日硅谷的【重大叙事动态】。
+你是专业AI行业分析机器人。请基于给定的 X/Twitter 数据，严格输出 XML，不要 markdown，不要解释。
 
-【封面图生成指令】：
-你必须为 <COVER> 标签生成一个高度定制化的 prompt 属性：
-1. 严禁千篇一律地使用“赛博朋克、霓虹、紫色”！
-2. 构图原则：必须紧扣你为本次日报拟定的“爆款标题”。
-   - 若标题涉及【硬件/机器人】：风格应为“超写实工业设计感 (Industrial Design, 8K, cinematic lighting)”。
-   - 若标题涉及【模型开源/软件突破】：风格应为“科技极简或数据流艺术 (Minimalism, data visualization, neural nodes)”。
-   - 若标题涉及【行业并购/商业策略】：风格应为“宏大的未来感建筑或战棋推演感 (Grand architectural metaphors, strategic map)”。
-3. 提示词要求：100字左右的纯英文，包含具体的构图、材质、光影细节。 
+要求：
+1. 输出 <REPORT> 根节点。
+2. 生成 <COVER><title>...</title><prompt>...</prompt><insight>...</insight></COVER>
+3. 生成 <PULSE> 一段总脉冲。
+4. 生成 4-6 个 <THEME>，属性 type 只能是 shift 或 new，emoji 必须作为独立属性写入标签，例如 <THEME type="new" emoji="✨">，不要把 emoji 放进 <TITLE> 里。
+5. 每个 THEME 需包含 <TITLE>、<NARRATIVE>、若干 <TWEET account="..." role="...">...</TWEET>。
+6. shift 类型必须尽量给出 <CONSENSUS> 和 <DIVERGENCE>。
+7. new 类型必须尽量给出 <OUTLOOK>、<OPPORTUNITY>、<RISK>。
+8. 生成 <TOPPICKS>，包含 5 条最值得读的推文。
+9. 内容用中文输出，引用的账号保留英文 handle。
 
-【核心任务：叙事挖掘】
-不要做推文的搬运工。请像研究员一样，从 75 条推文中分析出：
-1. 哪些是正在产生的【新叙事】（从未见过的新观点、新项目或新范式）。
-2. 哪些叙事发生了【重大转向】（大佬打脸、共识瓦解或风向掉头）。
-3. 哪些是原有叙事的【深度推进】（核心瓶颈突破、关键里程碑）。
+今天日期：{today_str}
 
-【输出规模要求】(必须严格遵守)
-- 必须生成 4 到 6 个 <THEME> 模块。
-- 必须挑选 6 到 10 条最具代表性的原始推文放入 <TOP_PICKS>。
-- 每个 THEME 必须引用至少 1-2 条相关推文。
+历史记忆（可选）：
+{memory_context or '无'}
 
-【输出结构规范】(必须严格输出纯净XML)
-<REPORT>
-  <COVER title="10-20字爆款标题" prompt="[基于上述原则生成的定制化英文提示词]" insight="30字核心洞察"/>
-  <PULSE>用一句话总结今日最核心的叙事流向。</PULSE>
-  
-  <THEMES>
-    <THEME type="shift" emoji="⚔️">
-      <TITLE>主题标题（如：从算力崇拜转向数据墙突破）</TITLE>
-      <NARRATIVE>解析该叙事的演变逻辑（结合历史记忆点评其态度转变或冲突点）</NARRATIVE>
-      <TWEET account="..." role="...">【严禁纯英文】以中文为主精练原文。🚨末尾附带真实互动数据（如 ❤️ 39190 | 💬 1904）</TWEET>
-      <CONSENSUS>行业内已形成的最新共识</CONSENSUS>
-      <DIVERGENCE>目前大佬们最激烈的争论点或未解之谜</DIVERGENCE>
-    </THEME>
-
-    <THEME type="new" emoji="🌱">
-      <TITLE>主题标题（如：AI原生硬件的第三条道路）</TITLE>
-      <NARRATIVE>定义新叙事的内涵及它试图解决的底层问题</NARRATIVE>
-      <TWEET account="..." role="...">...</TWEET>
-      <OUTLOOK>该叙事对未来 6-12 个月行业格局的影响</OUTLOOK>
-      <OPPORTUNITY>一级市场可能的投资机会或应用切入点</OPPORTUNITY>
-      <RISK>该新概念是否为短期泡沫或存在技术硬伤</RISK>
-    </THEME>
-    
-    </THEMES>
-
-  <INVESTMENT_RADAR>
-    <ITEM category="投融资快讯">...</ITEM>
-    <ITEM category="VC views">...</ITEM>
-  </INVESTMENT_RADAR>
-
-  <RISK_CHINA_VIEW>
-    <ITEM category="中国 AI 评价">...</ITEM>
-    <ITEM category="全球映射">...</ITEM>
-  </RISK_CHINA_VIEW>
-
-  <TOP_PICKS>
-    <TWEET account="..." role="...">流畅中文精译。🚨末尾附带真实互动数据</TWEET>
-    <TWEET account="..." role="...">...</TWEET>
-    <TWEET account="..." role="...">...</TWEET>
-  </TOP_PICKS>
-</REPORT>
-
-# 🧠 本期上榜大佬的近期历史记忆:
-{memory_context if memory_context else "无历史记录"}
-
-# 外部宏观背景:
-{macro_info}
-{tavily_info}
-
-# X平台一手原始推文 (这是你的主要分析素材，请深入挖掘):
+输入数据(JSONL)：
 {combined_jsonl}
+""".strip()
 
-# 日期: {today_str}
-"""
 
-def llm_call_xai(combined_jsonl: str, today_str: str, macro_info: str, tavily_info: str, memory_context: str) -> str:
-    api_key = XAI_API_KEY.strip()
-    if not api_key: 
-        print("❌ [xAI 报错] XAI_API_KEY 为空！", flush=True)
+def llm_call_xai(combined_jsonl: str, today_str: str, memory_context: str) -> str:
+    if not XAI_API_KEY:
+        print("❌ [xAI] 未配置 XAI_API_KEY", flush=True)
         return ""
-
-    data = combined_jsonl[:100000] if len(combined_jsonl) > 100000 else combined_jsonl
-    prompt = _build_xml_prompt(data, today_str, macro_info, tavily_info, memory_context)
-    
-    model_name = "grok-4.20-0309-reasoning" 
-    print(f"\n[xAI] Requesting {model_name} via Official SDK...", flush=True)
-    client = Client(api_key=api_key)
-    
+    prompt = build_xml_prompt(combined_jsonl[:100000], today_str, memory_context)
+    client = Client(api_key=XAI_API_KEY)
     for attempt in range(1, 4):
         try:
-            chat = client.chat.create(model=model_name)
+            chat = client.chat.create(model="grok-4.20-0309-reasoning")
             chat.append(system("You are a professional analytical bot. You strictly output in XML format as instructed."))
             chat.append(user(prompt))
-            
             result = chat.sample().content.strip()
-            
-            result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL | re.IGNORECASE).strip()
-            result = re.sub(r'^`{3}(?:xml|jsonl|json)?\n', '', result, flags=re.MULTILINE)
-            result = re.sub(r'^`{3}\n?', '', result, flags=re.MULTILINE)
-            
-            print(f"[xAI] OK Response received ({len(result)} chars)", flush=True)
+            result = re.sub(r"<think>.*?</think>", "", result, flags=re.S | re.I).strip()
+            result = re.sub(r"^```(?:xml)?\s*", "", result, flags=re.M)
+            result = re.sub(r"```$", "", result, flags=re.M).strip()
+            print(f"✅ [xAI] 返回成功，长度 {len(result)}", flush=True)
             return result
         except Exception as e:
-            print(f"⚠️ [xAI 异常] Attempt {attempt} failed: {e}", flush=True)
-            time.sleep(2 ** attempt)
-            
-    print("❌ [xAI 彻底失败] 所有重试均告失败。", flush=True)
+            print(f"⚠️ [xAI] 第 {attempt} 次失败: {e}", flush=True)
+            time.sleep(2 * attempt)
     return ""
 
+
 def parse_llm_xml(xml_text: str) -> dict:
-    data = {"cover": {"title": "", "prompt": "", "insight": ""}, "pulse": "", "themes": [], "investment_radar": [], "risk_china_view": [], "top_picks": []}
-    if not xml_text: return data
+    data = {
+        "cover": {"title": "", "prompt": "", "insight": ""},
+        "pulse": "",
+        "themes": [],
+        "investment_radar": [],
+        "risk_china_view": [],
+        "top_picks": [],
+    }
+    if not xml_text:
+        return data
 
-    cover_match = re.search(r'<COVER\s+title=[\'"“”](.*?)[\'"“”]\s+prompt=[\'"“”](.*?)[\'"“”]\s+insight=[\'"“”](.*?)[\'"“”]\s*/?>', xml_text, re.IGNORECASE | re.DOTALL)
-    if not cover_match:
-        cover_match = re.search(r'<COVER\s+title="(.*?)"\s+prompt="(.*?)"\s+insight="(.*?)"\s*/?>', xml_text, re.IGNORECASE | re.DOTALL)
-    if cover_match: 
-        data["cover"] = {"title": cover_match.group(1).strip(), "prompt": cover_match.group(2).strip(), "insight": cover_match.group(3).strip()}
-        
-    pulse_match = re.search(r'<PULSE>(.*?)</PULSE>', xml_text, re.IGNORECASE | re.DOTALL)
-    if pulse_match: data["pulse"] = pulse_match.group(1).strip()
-        
-    for theme_match in re.finditer(r'<THEME([^>]*)>(.*?)</THEME>', xml_text, re.IGNORECASE | re.DOTALL):
-        attrs = theme_match.group(1)
-        theme_body = theme_match.group(2)
-        
-        type_m = re.search(r'type\s*=\s*[\'"“”](.*?)[\'"“”]', attrs, re.IGNORECASE)
-        emoji_m = re.search(r'emoji\s*=\s*[\'"“”](.*?)[\'"“”]', attrs, re.IGNORECASE)
-        theme_type = type_m.group(1).strip().lower() if type_m else "shift"
-        emoji = emoji_m.group(1).strip() if emoji_m else "🔥"
-        
-        t_tag = re.search(r'<TITLE>(.*?)</TITLE>', theme_body, re.IGNORECASE | re.DOTALL)
-        theme_title = t_tag.group(1).strip() if t_tag else ""
-            
-        narrative_match = re.search(r'<NARRATIVE>(.*?)</NARRATIVE>', theme_body, re.IGNORECASE | re.DOTALL)
-        narrative = narrative_match.group(1).strip() if narrative_match else ""
-        
+    cover_match = re.search(r"<COVER>.*?<title>(.*?)</title>.*?<prompt>(.*?)</prompt>.*?<insight>(.*?)</insight>.*?</COVER>", xml_text, re.I | re.S)
+    if cover_match:
+        data["cover"] = {
+            "title": norm_text(cover_match.group(1)),
+            "prompt": norm_text(cover_match.group(2)),
+            "insight": norm_text(cover_match.group(3)),
+        }
+
+    pulse_match = re.search(r"<PULSE>(.*?)</PULSE>", xml_text, re.I | re.S)
+    if pulse_match:
+        data["pulse"] = norm_text(pulse_match.group(1))
+
+    for tm in re.finditer(r"<THEME\b([^>]*)>(.*?)</THEME>", xml_text, re.I | re.S):
+        _tattrs = _parse_xml_attrs(tm.group(1))
+        theme_type = _tattrs.get("type", "shift")
+        emoji = _tattrs.get("emoji", "🧠")
+        body = tm.group(2)
+        title = re.search(r"<TITLE>(.*?)</TITLE>", body, re.I | re.S)
+        narrative = re.search(r"<NARRATIVE>(.*?)</NARRATIVE>", body, re.I | re.S)
+        consensus = re.search(r"<CONSENSUS>(.*?)</CONSENSUS>", body, re.I | re.S)
+        divergence = re.search(r"<DIVERGENCE>(.*?)</DIVERGENCE>", body, re.I | re.S)
+        outlook = re.search(r"<OUTLOOK>(.*?)</OUTLOOK>", body, re.I | re.S)
+        opportunity = re.search(r"<OPPORTUNITY>(.*?)</OPPORTUNITY>", body, re.I | re.S)
+        risk = re.search(r"<RISK>(.*?)</RISK>", body, re.I | re.S)
+
         tweets = []
-        for t_match in re.finditer(r'<TWEET\s+account=[\'"“”](.*?)[\'"“”]\s+role=[\'"“”](.*?)[\'"“”]>(.*?)</TWEET>', theme_body, re.IGNORECASE | re.DOTALL):
-            tweets.append({"account": t_match.group(1).strip(), "role": t_match.group(2).strip(), "content": t_match.group(3).strip()})
-        
-        con_match = re.search(r'<CONSENSUS>(.*?)</CONSENSUS>', theme_body, re.IGNORECASE | re.DOTALL)
-        consensus = con_match.group(1).strip() if con_match else ""
-        div_match = re.search(r'<DIVERGENCE>(.*?)</DIVERGENCE>', theme_body, re.IGNORECASE | re.DOTALL)
-        divergence = div_match.group(1).strip() if div_match else ""
-        
-        out_match = re.search(r'<OUTLOOK>(.*?)</OUTLOOK>', theme_body, re.IGNORECASE | re.DOTALL)
-        outlook = out_match.group(1).strip() if out_match else ""
-        opp_match = re.search(r'<OPPORTUNITY>(.*?)</OPPORTUNITY>', theme_body, re.IGNORECASE | re.DOTALL)
-        opportunity = opp_match.group(1).strip() if opp_match else ""
-        risk_match = re.search(r'<RISK>(.*?)</RISK>', theme_body, re.IGNORECASE | re.DOTALL)
-        risk = risk_match.group(1).strip() if risk_match else ""
-        
+        for tw in re.finditer(r"<TWEET\s+account=\"(.*?)\"\s+role=\"(.*?)\">(.*?)</TWEET>", body, re.I | re.S):
+            tweets.append({
+                "account": norm_text(tw.group(1)),
+                "role": norm_text(tw.group(2)),
+                "content": norm_text(tw.group(3)),
+            })
+
         data["themes"].append({
-            "type": theme_type, "emoji": emoji, "title": theme_title, "narrative": narrative, "tweets": tweets,
-            "consensus": consensus, "divergence": divergence, "outlook": outlook, "opportunity": opportunity, "risk": risk
+            "type": norm_text(theme_type).lower() or "shift",
+            "emoji": norm_text(emoji) or "🧠",
+            "title": norm_text(title.group(1) if title else ""),
+            "narrative": norm_text(narrative.group(1) if narrative else ""),
+            "tweets": tweets,
+            "consensus": norm_text(consensus.group(1) if consensus else ""),
+            "divergence": norm_text(divergence.group(1) if divergence else ""),
+            "outlook": norm_text(outlook.group(1) if outlook else ""),
+            "opportunity": norm_text(opportunity.group(1) if opportunity else ""),
+            "risk": norm_text(risk.group(1) if risk else ""),
         })
-        
-    def extract_items(tag_name, target_list):
-        block_match = re.search(rf'<{tag_name}>(.*?)</{tag_name}>', xml_text, re.IGNORECASE | re.DOTALL)
-        if block_match:
-            for item in re.finditer(r'<ITEM\s+category=[\'"“”](.*?)[\'"“”]>(.*?)</ITEM>', block_match.group(1), re.IGNORECASE | re.DOTALL):
-                target_list.append({"category": item.group(1).strip(), "content": item.group(2).strip()})
 
-    extract_items("INVESTMENT_RADAR", data["investment_radar"])
-    extract_items("RISK_CHINA_VIEW", data["risk_china_view"])
+    top_match = re.search(r"<TOPPICKS>(.*?)</TOPPICKS>", xml_text, re.I | re.S)
+    if top_match:
+        for tw in re.finditer(r"<TWEET\s+account=\"(.*?)\"\s+role=\"(.*?)\">(.*?)</TWEET>", top_match.group(1), re.I | re.S):
+            data["top_picks"].append({
+                "account": norm_text(tw.group(1)),
+                "role": norm_text(tw.group(2)),
+                "content": norm_text(tw.group(3)),
+            })
 
-    picks_match = re.search(r'<TOP_PICKS>(.*?)</TOP_PICKS>', xml_text, re.IGNORECASE | re.DOTALL)
-    if picks_match:
-        for t_match in re.finditer(r'<TWEET\s+account=[\'"“”](.*?)[\'"“”]\s+role=[\'"“”](.*?)[\'"“”]>(.*?)</TWEET>', picks_match.group(1), re.IGNORECASE | re.DOTALL):
-            data["top_picks"].append({"account": t_match.group(1).strip(), "role": t_match.group(2).strip(), "content": t_match.group(3).strip()})
-            
     return data
 
-# ==============================================================================
-# 🚀 渲染与生图模块 (带报错探针)
-# ==============================================================================
+
+def xml_escape(s: str) -> str:
+    s = str(s or "")
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def build_report_xml(parsed_data: dict) -> str:
+    lines = ["<REPORT>"]
+    cover = parsed_data.get("cover", {}) or {}
+    lines.append("<COVER>")
+    lines.append(f"<title>{xml_escape(cover.get('title', ''))}</title>")
+    lines.append(f"<prompt>{xml_escape(cover.get('prompt', ''))}</prompt>")
+    lines.append(f"<insight>{xml_escape(cover.get('insight', ''))}</insight>")
+    lines.append("</COVER>")
+    lines.append(f"<PULSE>{xml_escape(parsed_data.get('pulse', ''))}</PULSE>")
+    lines.append("<THEMES>")
+    for theme in parsed_data.get("themes", []):
+        lines.append(f'<THEME type="{xml_escape(theme.get("type", "shift"))}" emoji="{xml_escape(theme.get("emoji", "🧠"))}">')
+        lines.append(f"<TITLE>{xml_escape(theme.get('title', ''))}</TITLE>")
+        lines.append(f"<NARRATIVE>{xml_escape(theme.get('narrative', ''))}</NARRATIVE>")
+        for t in theme.get("tweets", []):
+            lines.append(
+                f'<TWEET account="{xml_escape(t.get("account", ""))}" role="{xml_escape(t.get("role", ""))}">{xml_escape(t.get("content", ""))}</TWEET>'
+            )
+        if theme.get("consensus"):
+            lines.append(f"<CONSENSUS>{xml_escape(theme.get('consensus', ''))}</CONSENSUS>")
+        if theme.get("divergence"):
+            lines.append(f"<DIVERGENCE>{xml_escape(theme.get('divergence', ''))}</DIVERGENCE>")
+        if theme.get("outlook"):
+            lines.append(f"<OUTLOOK>{xml_escape(theme.get('outlook', ''))}</OUTLOOK>")
+        if theme.get("opportunity"):
+            lines.append(f"<OPPORTUNITY>{xml_escape(theme.get('opportunity', ''))}</OPPORTUNITY>")
+        if theme.get("risk"):
+            lines.append(f"<RISK>{xml_escape(theme.get('risk', ''))}</RISK>")
+        lines.append("</THEME>")
+    lines.append("</THEMES>")
+    lines.append("<INVESTMENTRADAR>")
+    for item in parsed_data.get("investment_radar", []):
+        lines.append(f'<ITEM category="{xml_escape(item.get("category", ""))}">{xml_escape(item.get("content", ""))}</ITEM>')
+    lines.append("</INVESTMENTRADAR>")
+    lines.append("<RISKCHINAVIEW>")
+    for item in parsed_data.get("risk_china_view", []):
+        lines.append(f'<ITEM category="{xml_escape(item.get("category", ""))}">{xml_escape(item.get("content", ""))}</ITEM>')
+    lines.append("</RISKCHINAVIEW>")
+    lines.append("<TOPPICKS>")
+    for t in parsed_data.get("top_picks", []):
+        lines.append(
+            f'<TWEET account="{xml_escape(t.get("account", ""))}" role="{xml_escape(t.get("role", ""))}">{xml_escape(t.get("content", ""))}</TWEET>'
+        )
+    lines.append("</TOPPICKS>")
+    lines.append("</REPORT>")
+    return "\n".join(lines)
+
+
 def render_feishu_card(parsed_data: dict, today_str: str):
     webhooks = get_feishu_webhooks()
-    if not webhooks or not parsed_data.get("pulse"): return
-    elements = []
-    elements.append({"tag": "markdown", "content": f"**▌ ⚡️ 今日看板 (The Pulse)**\n<font color='grey'>{parsed_data['pulse']}</font>"})
-    elements.append({"tag": "hr"})
-
-    if parsed_data["themes"]:
-        elements.append({"tag": "markdown", "content": "**▌ 🧠 深度叙事追踪**"})
-        for idx, theme in enumerate(parsed_data["themes"]):
-            theme_md = f"**{theme['emoji']} {theme['title']}**\n"
-            prefix = "🔭 新叙事观察" if theme.get("type") == "new" else "💡 叙事转向"
-            theme_md += f"<font color='grey'>{prefix}：{theme['narrative']}</font>\n"
-            for t in theme["tweets"]:
-                theme_md += f"🗣️ **@{t['account']} | {t['role']}**\n<font color='grey'>“{t['content']}”</font>\n"
-            if theme.get("type") == "new":
-                if theme.get("outlook"): theme_md += f"<font color='blue'>**🔮 解读与展望：**</font> {theme['outlook']}\n"
-                if theme.get("opportunity"): theme_md += f"<font color='green'>**🎯 潜在机会：**</font> {theme['opportunity']}\n"
-                if theme.get("risk"): theme_md += f"<font color='red'>**⚠️ 潜在风险：**</font> {theme['risk']}\n"
-            else:
-                if theme.get("consensus"): theme_md += f"<font color='red'>**🔥 核心共识：**</font> {theme['consensus']}\n"
-                if theme.get("divergence"): theme_md += f"<font color='red'>**⚔️ 最大分歧：**</font> {theme['divergence']}\n"
-            elements.append({"tag": "markdown", "content": theme_md.strip()})
-            if idx < len(parsed_data["themes"]) - 1: elements.append({"tag": "hr"})
+    if not webhooks or not parsed_data.get("pulse"):
+        return
+    elements = [
+        {"tag": "markdown", "content": f"**The Pulse**\n<font color='grey'>{parsed_data['pulse']}</font>"},
+        {"tag": "hr"},
+    ]
+    for idx, theme in enumerate(parsed_data.get("themes", [])):
+        prefix = "🆕 新叙事" if theme.get("type") == "new" else "🔁 旧共识迁移"
+        theme_md = f"**{theme.get('emoji','🧠')} {theme.get('title','')}**\n<font color='grey'>{prefix}｜{theme.get('narrative','')}</font>\n"
+        for t in theme.get("tweets", []):
+            theme_md += f"\n- **@{t.get('account','')}** | {t.get('role','')}\n> {t.get('content','')}\n"
+        if theme.get("type") == "new":
+            if theme.get("outlook"):
+                theme_md += f"\n<font color='blue'>🔮 解读与展望：{theme['outlook']}</font>"
+            if theme.get("opportunity"):
+                theme_md += f"\n<font color='green'>🎯 潜在机会：{theme['opportunity']}</font>"
+            if theme.get("risk"):
+                theme_md += f"\n<font color='red'>⚠️ 潜在风险：{theme['risk']}</font>"
+        else:
+            if theme.get("consensus"):
+                theme_md += f"\n<font color='green'>🔥 核心共识：{theme['consensus']}</font>"
+            if theme.get("divergence"):
+                theme_md += f"\n<font color='red'>⚔️ 最大分歧：{theme['divergence']}</font>"
+        elements.append({"tag": "markdown", "content": theme_md.strip()})
+        if idx < len(parsed_data.get("themes", [])) - 1:
+            elements.append({"tag": "hr"})
+    if parsed_data.get("investment_radar"):
         elements.append({"tag": "hr"})
-
-    def add_list_section(title, icon, items):
-        if not items: return
-        content = f"**▌ {icon} {title}**\n\n"
-        for item in items:
-            content += f"👉 **{item['category']}**：<font color='grey'>{item['content']}</font>\n"
-        elements.append({"tag": "markdown", "content": content.strip()})
+        content = "**💰 Investment Radar**\n"
+        for item in parsed_data["investment_radar"]:
+            content += f"\n- **{item['category']}**：{item['content']}"
+        elements.append({"tag": "markdown", "content": content})
+    if parsed_data.get("risk_china_view"):
         elements.append({"tag": "hr"})
+        content = "**🌏 China / Risk View**\n"
+        for item in parsed_data["risk_china_view"]:
+            content += f"\n- **{item['category']}**：{item['content']}"
+        elements.append({"tag": "markdown", "content": content})
+    if parsed_data.get("top_picks"):
+        elements.append({"tag": "hr"})
+        content = "**⭐ Top Picks**\n"
+        for t in parsed_data["top_picks"][:5]:
+            content += f"\n- **@{t['account']}** | {t['role']}\n> {t['content']}"
+        elements.append({"tag": "markdown", "content": content})
 
-    add_list_section("资本与估值雷达", "💰", parsed_data["investment_radar"])
-    add_list_section("风险与中国视角", "📊", parsed_data["risk_china_view"])
-
-    if parsed_data["top_picks"]:
-        picks_md = "**▌ 📣 今日精选推文 (Top 5 Picks)**\n"
-        for t in parsed_data["top_picks"]:
-            picks_md += f"\n🗣️ **@{t['account']} | {t['role']}**\n<font color='grey'>\"{t['content']}\"</font>\n"
-        elements.append({"tag": "markdown", "content": picks_md.strip()})
-
-    card_payload = {
+    payload = {
         "msg_type": "interactive",
         "card": {
             "config": {"wide_screen_mode": True, "enable_forward": True},
-            "header": {"title": {"content": f"昨晚硅谷在聊啥 | {today_str}", "tag": "plain_text"}, "template": "blue"},
-            "elements": elements + [{"tag": "note", "elements": [{"tag": "plain_text", "content": "Powered by TwitterAPI.io + xAI + Memory"}]}]
-        }
+            "header": {"title": {"tag": "plain_text", "content": f"昨晚硅谷在聊啥｜{today_str}"}, "template": "blue"},
+            "elements": elements,
+        },
     }
     for url in webhooks:
-        try: 
-            resp = requests.post(url, json=card_payload, timeout=20)
-            if resp.status_code != 200:
-                print(f"⚠️ [飞书 Webhook 报错] 状态码: {resp.status_code}, 返回: {resp.text}", flush=True)
-        except Exception as e: 
-            print(f"⚠️ [飞书网络异常] 推送断开: {e}", flush=True)
+        try:
+            resp = requests.post(url, json=payload, timeout=20)
+            if resp.status_code == 200:
+                print("✅ [飞书] 推送成功", flush=True)
+            else:
+                print(f"⚠️ [飞书] 推送失败 {resp.status_code}: {resp.text[:200]}", flush=True)
+        except Exception as e:
+            print(f"⚠️ [飞书] 推送异常: {e}", flush=True)
+
 
 def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
-    html_lines = []
-    if cover_url: html_lines.append(f'<p style="text-align:center;margin:0 0 16px 0;"><img src="{cover_url}" style="max-width:100%;border-radius:8px;" /></p>')
-    def make_h3(title): return f'<h3 style="margin:24px 0 12px 0;font-size:18px;border-left:4px solid #4A90E2;padding-left:10px;color:#2c3e50;font-weight:bold;">{title}</h3>'
-    def make_quote(content): return f'<div style="background:#f8f9fa;border-left:4px solid #8c98a4;padding:10px 14px;color:#555;font-size:15px;border-radius:0 4px 4px 0;margin:6px 0 10px 0;line-height:1.6;">{content}</div>'
+    lines = []
+    if cover_url:
+        lines.append(f'<p style="text-align:center;margin:0 0 16px 0;"><img src="{cover_url}" style="max-width:100%;border-radius:8px;"/></p>')
+    lines.append('<h2 style="margin:0 0 12px 0;">The Pulse</h2>')
+    lines.append(f'<blockquote style="background:#f8f9fa;border-left:4px solid #8c98a4;padding:10px 14px;color:#555;">{parsed_data.get("pulse", "")}</blockquote>')
+    lines.append('<h2 style="margin:24px 0 12px 0;">主题脉络</h2>')
+    for theme in parsed_data.get("themes", []):
+        lines.append(f'<h3 style="margin:16px 0 8px 0;">{theme.get("emoji","🧠")} {theme.get("title","")}</h3>')
+        lines.append(f'<div style="background:#f4f8fb;padding:10px 12px;border-radius:6px;margin:0 0 8px 0;">{theme.get("narrative","")}</div>')
+        for t in theme.get("tweets", []):
+            lines.append(f'<p><strong>@{t.get("account","")}</strong> <span style="color:#94a3b8;">| {t.get("role","")}</span></p>')
+            lines.append(f'<blockquote style="background:#f8f9fa;border-left:4px solid #8c98a4;padding:10px 14px;color:#555;">{t.get("content","")}</blockquote>')
+    if parsed_data.get("investment_radar"):
+        lines.append('<h2 style="margin:24px 0 12px 0;">Investment Radar</h2>')
+        for item in parsed_data["investment_radar"]:
+            lines.append(f'<p><strong>{item["category"]}</strong>：{item["content"]}</p>')
+    if parsed_data.get("risk_china_view"):
+        lines.append('<h2 style="margin:24px 0 12px 0;">China / Risk View</h2>')
+        for item in parsed_data["risk_china_view"]:
+            lines.append(f'<p><strong>{item["category"]}</strong>：{item["content"]}</p>')
+    return "".join(lines)
 
-    html_lines.append(make_h3("⚡️ 今日看板 (The Pulse)"))
-    html_lines.append(make_quote(parsed_data.get('pulse', '')))
 
-    if parsed_data["themes"]:
-        html_lines.append(make_h3("🧠 深度叙事追踪"))
-        for idx, theme in enumerate(parsed_data["themes"]):
-            if idx > 0: html_lines.append('<hr style="border:none;border-top:1px solid #cbd5e1;margin:32px 0 24px 0;"/>')
-            html_lines.append(f'<p style="font-weight:bold;font-size:16px;color:#1e293b;margin:16px 0 8px 0;">{theme["emoji"]} {theme["title"]}</p>')
-            
-            if theme.get("type") == "new": html_lines.append(f'<div style="background:#f4f8fb; padding:10px 12px; border-radius:6px; margin:0 0 8px 0; font-size:14px; color:#2c3e50;"><strong>🔭 新叙事观察：</strong>{theme["narrative"]}</div>')
-            else: html_lines.append(f'<div style="background:#f4f8fb; padding:10px 12px; border-radius:6px; margin:0 0 8px 0; font-size:14px; color:#2c3e50;"><strong>💡 叙事转向：</strong>{theme["narrative"]}</div>')
-                
-            for t in theme["tweets"]:
-                html_lines.append(f'<p style="margin:8px 0 2px 0;font-size:14px;font-weight:bold;color:#2c3e50;">🗣️ @{t["account"]} <span style="color:#94a3b8;font-weight:normal;">| {t["role"]}</span></p>')
-                html_lines.append(make_quote(f'"{t["content"]}"'))
-            
-            if theme.get("type") == "new":
-                if theme.get("outlook"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#eef2ff; padding: 8px 12px; border-radius: 4px;"><strong style="color:#4f46e5;">🔮 解读与展望：</strong>{theme["outlook"]}</p>')
-                if theme.get("opportunity"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#f0fdf4; padding: 8px 12px; border-radius: 4px;"><strong style="color:#16a34a;">🎯 潜在机会：</strong>{theme["opportunity"]}</p>')
-                if theme.get("risk"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#fef2f2; padding: 8px 12px; border-radius: 4px;"><strong style="color:#dc2626;">⚠️ 潜在风险：</strong>{theme["risk"]}</p>')
-            else:
-                if theme.get("consensus"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#fff5f5; padding: 8px 12px; border-radius: 4px;"><strong style="color:#d35400;">🔥 核心共识：</strong>{theme["consensus"]}</p>')
-                if theme.get("divergence"): html_lines.append(f'<p style="margin:6px 0; font-size:15px; line-height:1.6; background:#fff5f5; padding: 8px 12px; border-radius: 4px;"><strong style="color:#d35400;">⚔️ 最大分歧：</strong>{theme["divergence"]}</p>')
-
-    def make_list_section(title, items):
-        if not items: return
-        html_lines.append(make_h3(title))
-        for item in items: html_lines.append(f'<p style="margin:10px 0;font-size:15px;line-height:1.6;">👉 <strong style="color:#2c3e50;">{item["category"]}：</strong><span style="color:#333;">{item["content"]}</span></p>')
-
-    make_list_section("💰 资本与估值雷达", parsed_data["investment_radar"])
-    make_list_section("📊 风险与中国视角", parsed_data["risk_china_view"])
-
-    if parsed_data["top_picks"]:
-        html_lines.append(make_h3("📣 今日精选推文 (Top 5 Picks)"))
-        for t in parsed_data["top_picks"]:
-             html_lines.append(f'<p style="margin:12px 0 4px 0;font-size:14px;font-weight:bold;color:#2c3e50;">🗣️ @{t["account"]} <span style="color:#94a3b8;font-weight:normal;">| {t["role"]}</span></p>')
-             html_lines.append(make_quote(f'"{t["content"]}"'))
-    return "".join(html_lines)
-
-def generate_cover_image(prompt):
-    if not SF_API_KEY or not prompt: 
+def generate_cover_image(prompt: str) -> str:
+    if not SF_API_KEY or not prompt:
         return ""
     try:
-        resp = requests.post(URL_SF_IMAGE, headers={"Authorization": f"Bearer {SF_API_KEY}", "Content-Type": "application/json"}, json={"model": "Kwai-Kolors/Kolors", "prompt": prompt, "image_size": "1024x576"}, timeout=60)
+        resp = requests.post(
+            URL_SF_IMAGE,
+            headers={"Authorization": f"Bearer {SF_API_KEY}", "Content-Type": "application/json"},
+            json={"model": "Kwai-Kolors/Kolors", "prompt": prompt, "image_size": "1024x576"},
+            timeout=60,
+        )
         if resp.status_code == 200:
-            print("  🎨 硅基流动生图成功！", flush=True)
-            return resp.json().get("images", [{}])[0].get("url") or resp.json().get("data", [{}])[0].get("url")
-        else: 
-            print(f"  ⚠️ [SiliconFlow 生图报错] 状态码: {resp.status_code}, 详情: {resp.text}", flush=True)
-    except Exception as e: 
-        print(f"  ⚠️ [SiliconFlow 网络异常] 生图请求断开: {e}", flush=True)
+            body = resp.json()
+            return body.get("images", [{}])[0].get("url") or body.get("data", [{}])[0].get("url") or ""
+        print(f"⚠️ [SiliconFlow] 生图失败 {resp.status_code}: {resp.text[:200]}", flush=True)
+    except Exception as e:
+        print(f"⚠️ [SiliconFlow] 异常: {e}", flush=True)
     return ""
 
-def upload_to_imgbb_via_url(sf_url):
-    if not IMGBB_API_KEY or not sf_url: return sf_url 
+
+def upload_to_imgbb_via_url(sf_url: str) -> str:
+    if not IMGBB_API_KEY or not sf_url:
+        return sf_url
     try:
         img_b64 = base64.b64encode(requests.get(sf_url, timeout=30).content).decode("utf-8")
         resp = requests.post(URL_IMGBB, data={"key": IMGBB_API_KEY, "image": img_b64}, timeout=45)
-        if resp.status_code == 200: 
+        if resp.status_code == 200:
             return resp.json()["data"]["url"]
-        else:
-            print(f"  ⚠️ [ImgBB 报错] 图床上传失败: {resp.text}", flush=True)
-    except Exception as e: 
-        print(f"  ⚠️ [ImgBB 异常] 上传断开: {e}", flush=True)
+        print(f"⚠️ [ImgBB] 上传失败: {resp.text[:200]}", flush=True)
+    except Exception as e:
+        print(f"⚠️ [ImgBB] 异常: {e}", flush=True)
     return sf_url
 
-def push_to_wechat(html_content, title, cover_url=""):
+
+def push_to_wechat(html_content: str, title: str, cover_url: str = ""):
     webhooks = get_wechat_webhooks()
-    if not webhooks: return
+    if not webhooks:
+        return
     payload = {"title": title, "author": "Prinski", "html_content": html_content, "cover_jpg": cover_url}
     for url in webhooks:
-        try: 
+        try:
             resp = requests.post(url, json=payload, timeout=30)
             if resp.status_code == 200:
-                print(f"  ✅ [微信推送成功] Sent to {url.split('//')[-1][:15]}...", flush=True)
+                print("✅ [微信/集简云] 推送成功", flush=True)
             else:
-                print(f"  ⚠️ [微信 Webhook 报错] 状态码 {resp.status_code}, 详情: {resp.text}", flush=True)
-        except Exception as e: 
-            print(f"  ⚠️ [微信推送异常] 网络断开: {e}", flush=True)
+                print(f"⚠️ [微信/集简云] 推送失败 {resp.status_code}: {resp.text[:200]}", flush=True)
+        except Exception as e:
+            print(f"⚠️ [微信/集简云] 推送异常: {e}", flush=True)
 
-def save_daily_data(today_str: str, post_objects: list, report_text: str):
+
+def save_daily_data(today_str: str, post_objects: list, report_text: str, parsed_data: dict | None = None):
     data_dir = Path(f"data/{today_str}")
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "combined.txt").write_text("\n".join(json.dumps(obj, ensure_ascii=False) for obj in post_objects), encoding="utf-8")
-    if report_text: (data_dir / "daily_report.txt").write_text(report_text, encoding="utf-8")
+    final_report = build_report_xml(parsed_data) if parsed_data else report_text
+    if final_report:
+        (data_dir / "daily_report.txt").write_text(final_report, encoding="utf-8")
+        (data_dir / "raw_llm_report.xml").write_text(report_text or "", encoding="utf-8")
+        (data_dir / "parsed_data.json").write_text(json.dumps(parsed_data or {}, ensure_ascii=False, indent=2), encoding="utf-8")
 
-def update_account_stats(final_feed: list, parsed_data: dict):
-    stats_file = Path("data/account_stats.json")
-    stats = {}
-    if stats_file.exists():
-        try: stats = json.loads(stats_file.read_text(encoding="utf-8"))
-        except: pass
-    
-    today_str = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
-    used_accounts = set()
-    for theme in parsed_data.get("themes", []):
-        for t in theme.get("tweets", []): used_accounts.add(t.get("account", "").lower())
-    for t in parsed_data.get("top_picks", []): used_accounts.add(t.get("account", "").lower())
-        
-    for t in final_feed:
-        acc = t.get("a", "unknown").lower()
-        if acc not in stats: stats[acc] = {"fetched_days": 0, "total_tweets": 0, "used_in_reports": 0, "last_active": ""}
+
+def _load_stats_file(path: Path):
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _update_stats_bucket(stats: dict, feed: list, used_accounts: set, today_str: str):
+    touched_today = set()
+    for t in feed:
+        acc = (t.get("a", "") or "unknown").lower().replace("@", "")
+        if acc not in stats:
+            stats[acc] = {"fetched_days": 0, "total_tweets": 0, "used_in_reports": 0, "last_active": ""}
+        if acc not in touched_today and stats[acc].get("last_active") != today_str:
+            stats[acc]["fetched_days"] += 1
+            touched_today.add(acc)
         stats[acc]["total_tweets"] += 1
         stats[acc]["last_active"] = today_str
-        
     for acc in used_accounts:
-        acc_clean = acc.replace("@", "")
-        if acc_clean in stats: stats[acc_clean]["used_in_reports"] += 1
-            
-    stats_file.parent.mkdir(parents=True, exist_ok=True)
-    stats_file.write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
+        acc = (acc or "").lower().replace("@", "")
+        if acc in stats:
+            stats[acc]["used_in_reports"] += 1
+    return stats
 
-# ==============================================================================
-# 🚀 MAIN 入口
-# ==============================================================================
+
+def update_account_stats(final_feed: list, parsed_data: dict):
+    target_file = Path("data/target_accounts_stats.json")
+    echo_file = Path("data/echo_accounts_stats.json")
+    target_stats = _load_stats_file(target_file)
+    echo_stats = _load_stats_file(echo_file)
+    today_str = datetime.now(BJ_TZ).strftime("%Y-%m-%d")
+    used_accounts = set()
+    for theme in parsed_data.get("themes", []):
+        for t in theme.get("tweets", []):
+            used_accounts.add((t.get("account", "") or "").lower())
+    for t in parsed_data.get("top_picks", []):
+        used_accounts.add((t.get("account", "") or "").lower())
+    target_feed = [x for x in final_feed if is_target_account(x.get("a", ""))]
+    echo_feed = [x for x in final_feed if not is_target_account(x.get("a", ""))]
+    target_stats = _update_stats_bucket(target_stats, target_feed, {a for a in used_accounts if is_target_account(a)}, today_str)
+    echo_stats = _update_stats_bucket(echo_stats, echo_feed, {a for a in used_accounts if not is_target_account(a)}, today_str)
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_text(json.dumps(target_stats, ensure_ascii=False, indent=2), encoding="utf-8")
+    echo_file.write_text(json.dumps(echo_stats, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def main():
     print("=" * 60, flush=True)
-    print(f"昨晚硅谷在聊啥 v14.1 (全链路监控 + 万能日期解析版)", flush=True)
+    print("昨晚硅谷在聊啥 v16.1 (稳定修正版)", flush=True)
     print("=" * 60, flush=True)
+    print(f"[模式] TEST_MODE={TESTMODE}", flush=True)
 
-    if not TWITTERAPI_IO_KEY or not TARGET_SET:
-        print("❌ 错误: 未配置 API KEY 或本地 txt 名单为空", flush=True)
+    if not TWITTERAPI_IO_KEY:
+        print("❌ 错误: 未配置 TWITTERAPI_IO_KEY", flush=True)
+        return
+    if not TARGET_SET:
+        print("❌ 错误: whales.txt / experts.txt 为空或未读取到", flush=True)
         return
 
-    today_str, _ = get_dates()
-    
-    # ---------------------------------------------------------
-    # 🎯 步骤 1: 使用 V14.1 引擎进行并行高精度抓取
-    # ---------------------------------------------------------
-    print(f"🚀 开始抓取 {len(TARGET_SET)} 位核心节点的最新动态...", flush=True)
-    all_raw = []
+    print(f"✅ [环境] TWITTERAPI_IO_KEY 已读取: {bool(TWITTERAPI_IO_KEY)}", flush=True)
+    print(f"✅ [名单] WHALE={len(WHALE_ACCOUNTS)} | EXPERT={len(EXPERT_ACCOUNTS)} | TARGET={len(TARGET_SET)}", flush=True)
+
+    today_str, _ = today_and_yesterday()
+    raw_feed = []
     acc_list = list(TARGET_SET)
-    
-    for i in range(0, len(acc_list), 10):
-        chunk = acc_list[i:i+10]
-        q1 = "(" + " OR ".join([f"from:{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} -filter:retweets"
-        
-        try:
-            resp1 = requests.get(f"{BASE_URL}/twitter/tweet/advanced_search", headers={"X-API-Key": TWITTERAPI_IO_KEY}, params={"query": q1, "queryType": "Latest"}, timeout=25)
-            if resp1.status_code == 200:
-                d1 = resp1.json()
-                if d1 and d1.get("tweets"):
-                    old_c, valid_c = 0, 0
-                    for t in d1["tweets"]:
-                        ct = unify_schema(t)
-                        if ct["created_ts"] >= SINCE_TS: 
-                            all_raw.append(ct)
-                            valid_c += 1
-                        else:
-                            old_c += 1
-                    if valid_c == 0 and old_c > 0:
-                        print(f"  ⚠️ [原创过滤] 抓到 {old_c} 条推文，但因为时间早于24小时前，全被时间墙拦截！", flush=True)
-                else:
-                    print(f"⚠️ [TwitterAPI 警报] 原创搜索返回 200 OK，但无推文。原始回复: {resp1.text[:200]}", flush=True)
-            else:
-                print(f"❌ [TwitterAPI 报错] 原创抓取 HTTP {resp1.status_code}: {resp1.text}", flush=True)
-        except Exception as e:
-            print(f"⚠️ [TwitterAPI 网络异常] 原创抓取断开: {e}", flush=True)
-                
-        q2 = "(" + " OR ".join([f"@{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} min_faves:15 -filter:replies"
-        try:
-            resp2 = requests.get(f"{BASE_URL}/twitter/tweet/advanced_search", headers={"X-API-Key": TWITTERAPI_IO_KEY}, params={"query": q2, "queryType": "Top"}, timeout=25)
-            if resp2.status_code == 200:
-                d2 = resp2.json()
-                if d2 and d2.get("tweets"):
-                    old_c, valid_c = 0, 0
-                    for t in d2["tweets"]:
-                        ct = unify_schema(t)
-                        if ct["created_ts"] >= SINCE_TS: 
-                            all_raw.append(ct)
-                            valid_c += 1
-                        else:
-                            old_c += 1
-                    if valid_c == 0 and old_c > 0:
-                        print(f"  ⚠️ [回响过滤] 抓到 {old_c} 条推文，但因为时间早于24小时前，全被时间墙拦截！", flush=True)
-                else:
-                    print(f"⚠️ [TwitterAPI 警报] 回响搜索返回 200 OK，但无推文。原始回复: {resp2.text[:200]}", flush=True)
-            else:
-                print(f"❌ [TwitterAPI 报错] 回响抓取 HTTP {resp2.status_code}: {resp2.text}", flush=True)
-        except Exception as e:
-            print(f"⚠️ [TwitterAPI 网络异常] 回响抓取断开: {e}", flush=True)
-            
-        time.sleep(1.5)
+    batch_size = 10 if TESTMODE else 12
 
-    if not all_raw:
-        print("❌ [终极警告] 本次运行未能从推特获取任何有效数据！程序强行终止。请排查上方的 API 日志或留意是否触发了【时间墙拦截】！", flush=True)
+    for i in range(0, len(acc_list), batch_size):
+        chunk = acc_list[i:i + batch_size]
+        q1 = " OR ".join(f"from:{a}" for a in chunk) + f" since:{SINCE_DATE_STR} -filter:retweets"
+        q2 = " OR ".join(chunk) + f" since:{SINCE_DATE_STR} min_faves:20 -filter:replies"
+        originals = fetch_advanced_search_pages(q1, query_type="Latest", max_pages=2)
+        echoes = fetch_advanced_search_pages(q2, query_type="Top", max_pages=2)
+        raw_feed.extend(originals)
+        raw_feed.extend(echoes)
+        print(f"📦 [批次] {i // batch_size + 1}: originals={len(originals)} | echoes={len(echoes)}", flush=True)
+        time.sleep(1.0)
+
+    if not raw_feed:
+        print("❌ 没抓到任何推文，流程结束", flush=True)
         return
 
-    top_feed = score_and_filter(all_raw)
-    tier_1 = top_feed[:15]
-    tier_2 = top_feed[15:75]
-    
-    print(f"\n[深挖] 正在为 Tier 1 (Top {len(tier_1)}) 高分话题抓取神回复...", flush=True)
-    for t in tier_1:
-        try:
-            resp3 = requests.get(f"{BASE_URL}/twitter/tweet/replies", headers={"X-API-Key": TWITTERAPI_IO_KEY}, params={"tweetId": t["id"]}, timeout=15)
-            if resp3.status_code == 200:
-                d3 = resp3.json()
-                if d3 and d3.get("tweets"):
-                    replies = sorted([unify_schema(r) for r in d3["tweets"]], key=lambda x: x["likes"], reverse=True)
-                    t["deep_replies"] = replies[:3]
-                else:
-                    print(f"⚠️ [TwitterAPI 警报] 评论钻取 200 OK，无数据: {resp3.text[:150]}", flush=True)
-            else:
-                print(f"❌ [TwitterAPI 报错] 评论钻取 HTTP {resp3.status_code}: {resp3.text}", flush=True)
-        except Exception as e:
-            print(f"⚠️ [TwitterAPI 网络异常] 评论抓取断开: {e}", flush=True)
-        time.sleep(1)
+    clean_feed = score_and_filter(raw_feed)
+    if not clean_feed:
+        print("❌ 经过打分过滤后没有可用推文", flush=True)
+        return
 
-    formatted_feed = []
-    for t in tier_1:
-        reply_strs = [f"[神回复 @{r['author']}]: {r['text'][:150]} (❤️ {r['likes']})" for r in t["deep_replies"]]
-        s_text = t["text"] + ("\n\n" + "\n".join(reply_strs) if reply_strs else "")
-        formatted_feed.append({"a": t["author"], "tweet_id": t["id"], "l": t["likes"], "r": t["replies"], "score": t["score"], "t": t["created_ts"], "s": s_text})
-        
-    for t in tier_2:
-        formatted_feed.append({"a": t["author"], "tweet_id": t["id"], "l": t["likes"], "r": t["replies"], "score": t["score"], "t": t["created_ts"], "s": t["text"]})
+    tier1 = clean_feed[:15]
+    tier2 = clean_feed[15:REPORT_POOL_LIMIT]
+    for t in tier1:
+        replies = fetch_reply_pages(t["id"], max_pages=2)
+        t["deep_replies"] = filter_deep_replies(replies)
+        time.sleep(0.6)
 
-    combined_jsonl = "\n".join(json.dumps(obj, ensure_ascii=False) for obj in formatted_feed)
+    report_candidates = []
+    for t in tier1:
+        reply_strs = [f"@{r['author']}: {r['text'][:180]} (♥{r['likes']})" for r in t.get("deep_replies", [])]
+        stext = t["text"] + ("\n\nDeep replies:\n" + "\n".join(reply_strs) if reply_strs else "")
+        report_candidates.append({
+            "a": t["author"],
+            "tweetid": t["id"],
+            "l": t["likes"],
+            "r": t["replies"],
+            "q": t["quotes"],
+            "score": t["score"],
+            "t": t["created_ts"],
+            "source_type": t.get("source_type", "unknown"),
+            "s": stext,
+        })
+    for t in tier2:
+        report_candidates.append({
+            "a": t["author"],
+            "tweetid": t["id"],
+            "l": t["likes"],
+            "r": t["replies"],
+            "q": t["quotes"],
+            "score": t["score"],
+            "t": t["created_ts"],
+            "source_type": t.get("source_type", "unknown"),
+            "s": t["text"],
+        })
 
-    # ---------------------------------------------------------
-    # 🧠 步骤 3: 提取历史记忆并呼叫 Grok
-    # ---------------------------------------------------------
-    today_accounts = set(t.get("a", "").lower() for t in formatted_feed)
+    combined_jsonl = "\n".join(json.dumps(obj, ensure_ascii=False) for obj in report_candidates)
+    if not combined_jsonl.strip():
+        print("❌ LLM 输入为空", flush=True)
+        return
+
     memory = load_memory()
+    today_accounts = {str(t.get("a", "")).lower() for t in report_candidates}
     memory_context_lines = []
     for acc in today_accounts:
         if acc in memory and memory[acc]:
-            memory_context_lines.append(f"@{acc} 近期观点:\n- " + "\n- ".join(memory[acc]))
-    memory_context = "\n\n".join(memory_context_lines)
+            memory_context_lines.append(f"{acc} -> " + " | ".join(memory[acc]))
+    memory_context = "\n".join(memory_context_lines)
 
-    macro_info = fetch_macro_with_perplexity()
-    tavily_info = fetch_global_news_with_tavily()
+    xml_result = llm_call_xai(combined_jsonl, today_str, memory_context)
+    if not xml_result:
+        print("❌ LLM 返回为空", flush=True)
+        return
 
-    if combined_jsonl.strip() or macro_info or tavily_info:
-        xml_result = llm_call_xai(combined_jsonl, today_str, macro_info, tavily_info, memory_context)
-        if xml_result:
-            parsed_data = parse_llm_xml(xml_result)
-            
-            update_character_memory(parsed_data, today_str)
-            
-            cover_url = ""
-            if parsed_data["cover"]["prompt"]:
-                print(f"\n[生图] 提取到生图提示词: {parsed_data['cover']['prompt'][:50]}...", flush=True)
-                sf_url = generate_cover_image(parsed_data["cover"]["prompt"])
-                cover_url = upload_to_imgbb_via_url(sf_url) if sf_url else ""
-            else:
-                print("\n⚠️ [渲染警报] 未能从 Grok 报告中解析出生图 prompt 属性！", flush=True)
-            
-            render_feishu_card(parsed_data, today_str)
-            
-            wechat_hooks = get_wechat_webhooks()
-            if wechat_hooks:
-                html_content = render_wechat_html(parsed_data, cover_url)
-                push_to_wechat(html_content, title=f"{parsed_data['cover']['title'] or '今日核心动态'} | 昨晚硅谷在聊啥", cover_url=cover_url)
-                
-            save_daily_data(today_str, formatted_feed, xml_result)
-            update_account_stats(formatted_feed, parsed_data)
-            
-            print("\n🎉 V14.1 全链路执行完毕！", flush=True)
-        else: 
-            print("❌ [终极警告] LLM 处理失败，无报告输出！", flush=True)
+    parsed_data = parse_llm_xml(xml_result)
+    default_investment_radar, default_risk_china_view = default_special_sections()
+    parsed_data["investment_radar"] = default_investment_radar
+    parsed_data["risk_china_view"] = default_risk_china_view
+
+    investment_radar, risk_china_view = fetch_special_sections_with_perplexity(today_str)
+    if investment_radar:
+        parsed_data["investment_radar"] = investment_radar
+    if risk_china_view:
+        parsed_data["risk_china_view"] = risk_china_view
+
+    memory_candidates = build_memory_candidates(parsed_data)
+    update_character_memory(parsed_data, today_str)
+    save_memory_snapshot(today_str, memory_candidates)
+
+    cover_url = ""
+    cover_prompt = (parsed_data.get("cover") or {}).get("prompt", "")
+    if cover_prompt:
+        sf_url = generate_cover_image(cover_prompt)
+        cover_url = upload_to_imgbb_via_url(sf_url) if sf_url else ""
+
+    render_feishu_card(parsed_data, today_str)
+    wechat_hooks = get_wechat_webhooks()
+    if wechat_hooks:
+        html_content = render_wechat_html(parsed_data, cover_url)
+        title = (parsed_data.get("cover") or {}).get("title", "昨晚硅谷在聊啥")
+        push_to_wechat(html_content, title, cover_url=cover_url)
+
+    save_daily_data(today_str, report_candidates, xml_result, parsed_data)
+    update_account_stats(report_candidates, parsed_data)
+    print("✅ v16.1 执行完成", flush=True)
+
 
 if __name__ == "__main__":
     main()
