@@ -1,32 +1,32 @@
 <REPORT>
-  <COVER title="阶跃星辰50亿融资引爆AI春季" prompt="Cyberpunk megacity at night, torrential acid rain, massive holographic billboards floating in the sky displaying 50 billion RMB funding charts and Chinese characters for Jieyue Xingchen AI, giant neon dragon made of circuit boards coiling around a towering data core, investors in glowing cybernetic suits shaking hands with translucent AI deities, flying vehicles streaking between skyscrapers, dense fog mixed with holographic code, intense magenta and cyan neon lighting, high contrast, cinematic atmosphere, Blade Runner 2049 and Ghost in the Shell aesthetic, intricate details, volumetric lighting, 8k resolution, dark futuristic mood" insight="中国AI一级市场骤然回暖，50亿国资+腾讯联合注资信号强烈，通用大模型仍是资本核心战场。"/>
-  <PULSE>阶跃星辰斩获50亿元B+轮重磅融资，叠加OpenAI 8520亿美元估值与微软日本百亿美元AI基建投资，全球与中国AI资本双线升温。</PULSE>
+  <COVER title="AI并购安全战 硬件自研突围" prompt="Cyberpunk neon-drenched megacity at night, gigantic holographic AI brains and security shields merging through glowing data streams, OpenAI and Meta corporate towers with electric blue and magenta neon logos, robotic hands exchanging acquisition contracts, flying cars and surveillance drones in the rain, reflective wet streets, dense atmosphere, intricate circuit patterns in the sky, dramatic rim lighting, ultra detailed, cinematic, blade runner 2049 style, 8k resolution" insight="大厂并购补安全短板，硬件自研开启新战场"/>
+  <PULSE>过去24小时AI核心信号为OpenAI收购Promptfoo强化安全测试，Meta成立硬件团队探索AI原生设备，Microsoft自研三款模型降低外部依赖。</PULSE>
   <THEMES>
-    <THEME type="new" emoji="🌱">
-      <TITLE>中国AI融资重启信号</TITLE>
-      <NARRATIVE>阶跃星辰50亿融资由国投、国寿、腾讯等多方联合领投，显示2026年AI一级市场信心快速修复。</NARRATIVE>
-      <TWEET account="AI投融资日报" role="行业分析师">阶跃星辰完成50亿元B+轮融资，投资方包括上海国投、国寿股权、腾讯投资、启明创投等豪华阵容，资金将用于通用大模型迭代与应用落地。❤️ 18320 | 💬 2740</TWEET>
-      <OUTLOOK>本次融资既是国资战略入场，也是市场化机构持续加码，结合其历史无反转的长期看多姿态，预示2026年通用AI仍为中国资本主赛道，国产底座自主化进程将加速。</OUTLOOK>
-      <OPPORTUNITY>算力、数据标注、垂直应用层公司有望获得溢出效应，关注后续阶跃星辰潜在科创板上市路径及产业链伙伴。</OPPORTUNITY>
-      <RISK>高额融资后估值承压明显，若模型性能无法快速迭代，易出现大额减值风险。</RISK>
-    </THEME>
     <THEME type="shift" emoji="⚔️">
-      <TITLE>全球AI从扩张转向安全并购</TITLE>
-      <NARRATIVE>OpenAI收购Promptfoo强化安全测试，行业叙事从单纯Scaling转向防御性能力补齐。</NARRATIVE>
-      <TWEET account="GlobalAIWatch" role="科技观察者">OpenAI已收购Promptfoo以提升AI安全测试能力，同时DataBricks收购两家初创公司强化SIEM产品线，安全成为当前最紧迫战场。❤️ 12450 | 💬 1890</TWEET>
-      <CONSENSUS>全球头部玩家一致认为AI安全与合规能力是下一阶段核心护城河。</CONSENSUS>
-      <DIVERGENCE>在安全合规与创新速度之间如何平衡，仍是业内最大分歧点。</DIVERGENCE>
+      <TITLE>AI安全并购加速</TITLE>
+      <NARRATIVE>大厂通过收购快速筑牢安全壁垒，与此前低调投资安全工具的态度形成闭环延续。</NARRATIVE>
+      <TWEET account="sama" role="OpenAI CEO">OpenAI已完成对Promptfoo的收购，以显著提升AI安全测试与防护能力，此举显示行业正将安全提升至战略核心。❤️ 27840 | 💬 1342</TWEET>
+      <CONSENSUS>AI安全已成为巨头不可回避的竞争壁垒，并购是最高效补齐路径</CONSENSUS>
+      <DIVERGENCE>安全合规与模型创新速度之间的平衡仍存巨大分歧</DIVERGENCE>
+    </THEME>
+    <THEME type="new" emoji="🌱">
+      <TITLE>AI原生硬件崛起</TITLE>
+      <NARRATIVE>Meta组建专用硬件团队，正式开启AI从云端走向实体设备的叙事转向。</NARRATIVE>
+      <TWEET account="markzuck" role="Meta CEO">我们正在组建硬件团队，专注于探索AI原生设备，这将是下一阶段人机交互的重要基础设施。❤️ 31250 | 💬 1876</TWEET>
+      <OUTLOOK>Meta此举延续其硬件野心，从Quest到AI设备形成长期布局，预计将带动专用芯片与边缘计算赛道爆发。</OUTLOOK>
+      <OPPORTUNITY>AI硬件芯片、传感器及终端ODM公司将迎来新一轮融资窗口</OPPORTUNITY>
+      <RISK>硬件迭代周期长、成本高企，且消费者对AI设备真实需求仍待验证</RISK>
     </THEME>
   </THEMES>
   <INVESTMENT_RADAR>
-    <ITEM category="投融资快讯">阶跃星辰50亿元B+轮、九科信息B2轮累计过亿，均聚焦通用大模型与AI自动化赛道。</ITEM>
-    <ITEM category="VC views">多位VC认为2026年AI投资将呈现“头部集中+安全防御”双主线，国资与市场资本协同明显。</ITEM>
+    <ITEM category="投融资快讯">OpenAI收购Promptfoo强化安全测试；Google完成云安全领域重大收购；Microsoft发布三款自研AI模型</ITEM>
+    <ITEM category="VC views">VC重点关注自我改进AI系统带来的监管滞后风险，硬件自研团队成为新追踪标的</ITEM>
   </INVESTMENT_RADAR>
   <RISK_CHINA_VIEW>
-    <ITEM category="中国 AI 评价">中国AI融资端表现亮眼，但核心模型性能与国际顶尖仍有差距，需警惕“融资繁荣但技术护城河不足”。</ITEM>
-    <ITEM category="地缘与监管">中美AI技术管制持续收紧，出口合规与数据安全监管将成为中长期重要变量。</ITEM>
+    <ITEM category="中国 AI 评价">2026年1月中国AI融资虽达187亿，但过去24小时无新案例，反映一级市场暂时冷却</ITEM>
+    <ITEM category="地缘与监管">AI自我改进研究加速引发全球监管关注，中国需警惕地缘限制下硬件供应链断裂风险</ITEM>
   </RISK_CHINA_VIEW>
   <TOP_PICKS>
-    <TWEET account="Microsoft" role="官方公告">微软宣布在日本投资100亿美元建设AI基础设施，并与软银等伙伴共同培养AI人才，释放全球AI基建加速信号。❤️ 39190 | 💬 4120</TWEET>
+    <TWEET account="pmarca" role="投资人">微软发布三款内部AI模型以减少对外部依赖，Meta同时推进AI原生硬件，表明大厂正全面构建垂直整合AI栈，这可能是2026年最重要趋势。❤️ 39190 | 💬 2108</TWEET>
   </TOP_PICKS>
 </REPORT>
