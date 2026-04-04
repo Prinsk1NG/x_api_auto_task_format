@@ -5,13 +5,14 @@ on:
   schedule:
     - cron: '0 0 * * *'
   
-  # 手动触发：允许在 GitHub Actions 页面点击 "Run workflow" 随时测试
+  # 手动触发：允许在 GitHub Actions 页面随时手动运行
   workflow_dispatch:
     inputs:
       test_mode:
-        description: '是否开启测试模式 (true/false)'
-        required: true
-        default: 'false'
+        description: '🧪 开启测试模式 (勾选后仅发测试群，不打扰主群)'
+        required: false
+        type: boolean
+        default: false
 
 # 🚨 极其重要：赋予 Action 修改仓库文件的权限
 permissions:
@@ -54,13 +55,14 @@ jobs:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}     # 调试群
           FEISHU_WEBHOOK_URL_1: ${{ secrets.FEISHU_WEBHOOK_URL_1 }} # 核心主群
           
-          # 微信分发渠道 (如果 Secrets 中配置了，会在这里生效)
+          # 微信分发渠道
           JIJYUN_WEBHOOK_URL: ${{ secrets.JIJYUN_WEBHOOK_URL }}
           OriSG_WEBHOOK_URL: ${{ secrets.OriSG_WEBHOOK_URL }}
           OriCN_WEBHOOK_URL: ${{ secrets.OriCN_WEBHOOK_URL }}
           
           # 运行模式控制
-          TEST_MODE_ENV: ${{ github.event.inputs.test_mode || 'false' }}
+          # 如果勾选了测试，传出 'true'；如果是定时自动运行（无勾选），传出 'false'
+          TEST_MODE_ENV: ${{ inputs.test_mode == true && 'true' || 'false' }}
         run: |
           # 确保文件名与您仓库中的 Python 文件名一致
           python x_api_auto_task_xai_xml.py
@@ -70,7 +72,7 @@ jobs:
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 🚨 核心改动：统一添加 data 文件夹（里面已经包含了 memory 和 stats），以及本地名单
+          # 🚨 核心改动：统一添加 data 文件夹（里面包含了 memory 和 stats），以及本地名单
           git add data/ whales.txt experts.txt || true
           
           git commit -m "🤖 [Daily Intelligence] Archive V11 reports, raw tweets and memory bank" || echo "No changes to commit"
