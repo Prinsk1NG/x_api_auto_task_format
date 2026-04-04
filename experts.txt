@@ -93,3 +93,10 @@ WIRED
 xAI
 XREAL_Global
 ycombinator
+# --- 新增的 6 位叙事超级节点 ---
+Dylan522p
+lilianweng
+JohnSchulman2
+nottombrown
+simonw
+soumithchintala
