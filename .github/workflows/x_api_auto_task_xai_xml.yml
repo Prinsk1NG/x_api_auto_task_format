@@ -1,20 +1,19 @@
-name: Global Chinese Tech & AI Daily (v10.6)
+name: 硅谷情报局自动任务 (V10.8)
 
 on:
-  # 每天定时执行 (UTC时间 00:00，对应北京时间早上 08:00)
-  # schedule:
-   # - cron: '0 0 * * *'
+  # 定时触发：每天北京时间早上 8:00 (对应 UTC 00:00)
+  schedule:
+    - cron: '0 0 * * *'
   
-  # 允许在 GitHub Actions 页面手动点击运行，并支持传入测试参数
+  # 手动触发：允许在 GitHub Actions 页面点击 "Run workflow" 随时测试
   workflow_dispatch:
     inputs:
       test_mode:
-        description: '开启测试模式 (快速验证功能)'
-        required: false
-        type: boolean
-        default: false
+        description: '是否开启测试模式 (true/false)'
+        required: true
+        default: 'false'
 
-# 🚨 极其重要：必须赋予写入权限，否则最后一步的 git push 会报错拒绝访问
+# 🚨 极其重要：赋予 Action 修改仓库文件的权限
 permissions:
   contents: write
 
@@ -23,72 +22,53 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Code
+      - name: 1. 拉取最新代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 拉取完整历史，避免 Push 冲突
 
-      - name: Set up Python 3.10
+      - name: 2. 安装 Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           
-      - name: Install Dependencies
+      - name: 3. 安装核心依赖
         run: |
           python -m pip install --upgrade pip
-          
-          # V10.6 极简高效的 API 架构依赖
+          # 🚨 必须包含 xai-sdk 用于调用 Grok 模型
           pip install requests xai-sdk
           
-      - name: Run Auto Task Script
+      - name: 4. 执行情报搜集与分析脚本
         env:
-          # 🚨 1. 核心推特抓取密钥 (TwitterAPI.io)
-          twitterapi_io_KEY: ${{ secrets.twitterapi_io_KEY }}
-          
-          # 🚨 2. 客观事实情报源 API Key
+          # 基础情报 API
+          twitterapi_io_KEY: ${{ secrets.TWITTERAPI_IO_KEY }}
           PPLX_API_KEY: ${{ secrets.PPLX_API_KEY }}
-          
-          # 🚨 3. 全网热点扫描 API Key
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
-          TAVILY_API_KEY_2: ${{ secrets.TAVILY_API_KEY_2 }}
-          TAVILY_API_KEY_3: ${{ secrets.TAVILY_API_KEY_3 }}
-          TAVILY_API_KEY_4: ${{ secrets.TAVILY_API_KEY_4 }}
-          TAVILY_API_KEY_5: ${{ secrets.TAVILY_API_KEY_5 }}
-
-          # 🚨 4. 大模型与图床 API Keys
+          
+          # 逻辑与生图 API
           XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           SF_API_KEY: ${{ secrets.SF_API_KEY }}
           IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
           
-          # 🚨 5. 推送 Webhooks (飞书 + 多端微信)
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_URL_1: ${{ secrets.FEISHU_WEBHOOK_URL_1 }}
-          FEISHU_WEBHOOK_URL_2: ${{ secrets.FEISHU_WEBHOOK_URL_2 }}
-          FEISHU_WEBHOOK_URL_3: ${{ secrets.FEISHU_WEBHOOK_URL_3 }}
-          JIJYUN_WEBHOOK_URL: ${{ secrets.JIJYUN_WEBHOOK_URL }}
-          OriCN_WEBHOOK_URL: ${{ secrets.OriCN_WEBHOOK_URL }}
-          OriSG_WEBHOOK_URL: ${{ secrets.OriSG_WEBHOOK_URL }}
+          # 飞书分发渠道
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}     # 调试群
+          FEISHU_WEBHOOK_URL_1: ${{ secrets.FEISHU_WEBHOOK_URL_1 }} # 核心主群
           
-          # 控制参数
-          TEST_MODE_ENV: ${{ github.event.inputs.test_mode }}
-          
+          # 运行模式控制
+          # 如果手动触发时选择了测试模式，则优先使用输入值；否则默认关闭测试
+          TEST_MODE_ENV: ${{ github.event.inputs.test_mode || 'false' }}
         run: |
-          # 确保这里执行的文件名与你仓库里的 Python 主程序文件名完全一致！
+          # 确保文件名与您仓库中的 Python 文件名一致
           python x_api_auto_task_xai_xml.py
 
-      # 🚨 新增：执行完任务后，强制让云端机器把记忆库和报表写入并保存到你的 GitHub 仓库中
-      - name: Commit and Push Daily Stats and Memory
+      - name: 5. 自动保存每日快照与记忆账本
         run: |
           git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           
-          # 把动态记忆库、账号统计数据，以及可能发生变动的名单一并保存
-          git add data/account_stats.json data/character_memory.json whales.txt experts.txt || true
-          git commit -m "🤖 Auto-save daily stats and memory bank" || echo "No changes to commit"
+          # 🚨 核心改动：git add data/ 确保当天生成的日期文件夹被上传
+          # 同时保存记忆账本、账号统计、以及人员名单
+          git add data/ character_memory.json account_stats.json whales.txt experts.txt || true
+          
+          git commit -m "🤖 [Daily Intelligence] Archive reports, raw tweets and update memory bank" || echo "No changes to commit"
           git push
-
-      - name: Upload Data Artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: daily-data
-          path: data/
-          retention-days: 30
