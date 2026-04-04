@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-x_api_auto_task_xai_xml.py  v13.2 (终极强力探针版：V13精准抓取 + V10.6原版推理与渲染)
+x_api_auto_task_xai_xml.py  v14.0 (全链路监控探针版)
 Architecture: TwitterAPI.io -> PPLX/Tavily -> xAI SDK (Reasoning) + Memory Bank
 """
 
@@ -45,19 +45,17 @@ def D(b64_str):
 URL_SF_IMAGE   = D("aHR0cHM6Ly9hcGkuc2lsaWNvbmZsb3cuY24vdjEvaW1hZ2VzL2dlbmVyYXRpb25z")
 URL_IMGBB      = D("aHR0cHM6Ly9hcGkuaW1nYmIuY29tLzEvdXBsb2Fk")
 
-# ── V13 抓取引擎需要的全局时间窗与 API 基础配置 ──
+# ── 基础配置与时间窗 ──────────────────────────────
 BASE_URL = "https://api.twitterapi.io"
 NOW_UTC = datetime.now(timezone.utc)
 SINCE_24H = NOW_UTC - timedelta(days=1)
 SINCE_TS = int(SINCE_24H.timestamp())
 SINCE_DATE_STR = SINCE_24H.strftime("%Y-%m-%d")
-# ───────────────────────────────────────────────────
 
 # 🚨 动态读取外部名单系统
 def load_account_list(filename):
     if not os.path.exists(filename): return []
     with open(filename, "r", encoding="utf-8") as f:
-        # 去除 @ 符号、转小写、跳过注释行
         return [line.strip().replace("@", "").lower() for line in f if line.strip() and not line.strip().startswith("#")]
 
 WHALE_ACCOUNTS = load_account_list("whales.txt")
@@ -96,7 +94,7 @@ def get_dates() -> tuple:
 
 
 # ==============================================================================
-# 🎯 V13 数据清洗与打分引擎 (抗 None, 抗群聊垃圾)
+# 🎯 V13 数据清洗与打分引擎
 # ==============================================================================
 AI_KEYWORDS = ["ai", "llm", "agent", "model", "gpt", "release", "inference", "open-source", "agi", "claude", "openai"]
 
@@ -120,7 +118,6 @@ def unify_schema(t):
     }
 
 def score_and_filter(tweets):
-    print("\n🧠 执行去重、打分与单人限流...")
     unique_tweets = {}
     for t in tweets:
         t_id = t["id"]
@@ -134,7 +131,6 @@ def score_and_filter(tweets):
         
         if any(kw in text_lower for kw in AI_KEYWORDS): score += 300
         
-        # 降噪与防伪
         clean_text = re.sub(r'https?://\S+|@\w+', '', text_lower).strip()
         if len(clean_text) < 15: score -= 500
         if t["text"].count('@') > 5: score -= 1000
@@ -146,49 +142,55 @@ def score_and_filter(tweets):
     author_counts = {}
     final_capped = []
     for t in scored_list:
-        if author_counts.get(t["author"], 0) < 3: # 防单人刷屏
+        if author_counts.get(t["author"], 0) < 3: 
             final_capped.append(t)
             author_counts[t["author"]] = author_counts.get(t["author"], 0) + 1
             
     return final_capped
 
 # ==============================================================================
-# 🧩 V10.6 原版宏观数据辅助 (PPLX / Tavily)
+# 🧩 宏观数据辅助 (带详细监控探针)
 # ==============================================================================
 def fetch_macro_with_perplexity() -> str:
     if not PPLX_API_KEY: return ""
-    print("\n🕵️ [宏观新闻官] 呼叫 Perplexity 获取硬核数据...", flush=True)
+    print("\n🕵️ [Perplexity] 呼叫 PPLX 获取宏观数据...", flush=True)
     try:
-        prompt = """你是顶级 AI 行业分析师。请仅检索过去 24 小时内 AI 行业的【硬核客观数据】。
-        🚨 最高指令：只抓取两类具体事实：1. 具体的融资金额与并购案。2. GitHub上刚发布的AI开源项目或硬件。绝对禁止将Perplexity作为来源。"""
+        prompt = """你是顶级 AI 行业分析师。请仅检索过去 24 小时内 AI 行业的【硬核客观数据】。只抓取：1. 具体的融资金额与并购案。2. GitHub上刚发布的AI开源项目或硬件。绝对禁止将Perplexity作为来源。"""
         headers = {"Authorization": f"Bearer {PPLX_API_KEY}", "Content-Type": "application/json"}
         payload = {"model": "sonar-pro", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
         resp = requests.post("https://api.perplexity.ai/chat/completions", headers=headers, json=payload, timeout=60)
+        
         if resp.status_code == 200:
             data = resp.json()["choices"][0]["message"]["content"]
-            print(f"  ✅ Perplexity 宏观客观数据收集完毕 ({len(data)} 字)", flush=True)
+            print(f"  ✅ Perplexity 收集完毕 ({len(data)} 字)", flush=True)
             return data
-    except: pass
+        else:
+            print(f"  ⚠️ [Perplexity 报错] 状态码: {resp.status_code}, 详情: {resp.text}", flush=True)
+    except Exception as e: 
+        print(f"  ⚠️ [Perplexity 异常] 网络断开或超时: {e}", flush=True)
     return ""
 
 def fetch_global_news_with_tavily() -> str:
     if not TAVILY_KEYS: return ""
-    print(f"\n🌍 [全网雷达] 扫描全球 AI 硬核项目...", flush=True)
-    url = "https://api.tavily.com/search"
-    headers = {"Content-Type": "application/json"}
-    payload = {"api_key": get_random_tavily_key(), "query": "AI startup funding, mergers and acquisitions, new AI hardware releases, and trending open-source AI GitHub projects globally in the last 24 hours", "search_depth": "advanced", "topic": "news", "days": 1, "include_answer": True}
-    aggregated_context = ""
+    print(f"\n🌍 [Tavily] 扫描全网 AI 热点...", flush=True)
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=45)
-        if response.status_code == 200:
-            data = response.json()
-            aggregated_context += f"### [Tavily 全网客观数据]\n" + data.get("answer", "")
-            print("  ✅ Tavily 全网客观热点扫描完毕。", flush=True)
-    except: pass
-    return aggregated_context
+        url = "https://api.tavily.com/search"
+        headers = {"Content-Type": "application/json"}
+        payload = {"api_key": get_random_tavily_key(), "query": "AI startup funding, mergers and acquisitions, new AI hardware releases, and trending open-source AI GitHub projects globally in the last 24 hours", "search_depth": "advanced", "topic": "news", "days": 1, "include_answer": True}
+        resp = requests.post(url, json=payload, headers=headers, timeout=45)
+        
+        if resp.status_code == 200:
+            data = resp.json()
+            print("  ✅ Tavily 扫描完毕。", flush=True)
+            return f"### [Tavily 全网客观数据]\n" + data.get("answer", "")
+        else:
+            print(f"  ⚠️ [Tavily 报错] 状态码: {resp.status_code}, 详情: {resp.text}", flush=True)
+    except Exception as e: 
+        print(f"  ⚠️ [Tavily 异常] 网络断开或超时: {e}", flush=True)
+    return ""
 
 # ==============================================================================
-# 🧠 V10.6 动态记忆库模块 (Memory Bank)
+# 🧠 动态记忆库模块 (Memory Bank)
 # ==============================================================================
 MEMORY_FILE = Path("data/character_memory.json")
 
@@ -217,14 +219,14 @@ def update_character_memory(parsed_data, today_str):
             new_entry = f"[{today_str}]: {content}"
             if new_entry not in memory[acc]:
                 memory[acc].append(new_entry)
-                memory[acc] = memory[acc][-5:] # 只保留最近5条记忆
+                memory[acc] = memory[acc][-5:] 
                 count += 1
     if count > 0:
         save_memory(memory)
-        print(f"\n[Memory] 🧠 已更新 {count} 条历史记忆存入账本。")
+        print(f"\n[Memory] 🧠 已更新 {count} 条历史记忆存入账本。", flush=True)
 
 # ==============================================================================
-# 🚀 V10.6 xAI 大模型调用与 XML 提示词
+# 🚀 xAI 大模型调用与 XML 提示词
 # ==============================================================================
 def _build_xml_prompt(combined_jsonl: str, today_str: str, macro_info: str, tavily_info: str, memory_context: str) -> str:
     return f"""
@@ -283,33 +285,36 @@ def _build_xml_prompt(combined_jsonl: str, today_str: str, macro_info: str, tavi
 
 def llm_call_xai(combined_jsonl: str, today_str: str, macro_info: str, tavily_info: str, memory_context: str) -> str:
     api_key = XAI_API_KEY.strip()
-    if not api_key: return ""
+    if not api_key: 
+        print("❌ [xAI 报错] XAI_API_KEY 为空！", flush=True)
+        return ""
 
     data = combined_jsonl[:100000] if len(combined_jsonl) > 100000 else combined_jsonl
     prompt = _build_xml_prompt(data, today_str, macro_info, tavily_info, memory_context)
     
     model_name = "grok-4.20-0309-reasoning" 
-    print(f"\n[LLM/xAI] Requesting {model_name} via Official xai-sdk...", flush=True)
+    print(f"\n[xAI] Requesting {model_name} via Official SDK...", flush=True)
     client = Client(api_key=api_key)
     
     for attempt in range(1, 4):
         try:
             chat = client.chat.create(model=model_name)
-            chat.append(system("You are a professional analytical bot. You strictly output in XML format as instructed. Do not ignore the translation rules."))
+            chat.append(system("You are a professional analytical bot. You strictly output in XML format as instructed."))
             chat.append(user(prompt))
             
             result = chat.sample().content.strip()
             
-            # 清理推理模型的内部思考标签
             result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL | re.IGNORECASE).strip()
             result = re.sub(r'^`{3}(?:xml|jsonl|json)?\n', '', result, flags=re.MULTILINE)
             result = re.sub(r'^`{3}\n?', '', result, flags=re.MULTILINE)
             
-            print(f"[LLM/xAI] OK Response received ({len(result)} chars after cleanup)", flush=True)
+            print(f"[xAI] OK Response received ({len(result)} chars)", flush=True)
             return result
         except Exception as e:
-            print(f"[LLM/xAI] Attempt {attempt} failed: {e}", flush=True)
+            print(f"⚠️ [xAI 异常] Attempt {attempt} failed: {e}", flush=True)
             time.sleep(2 ** attempt)
+            
+    print("❌ [xAI 彻底失败] 所有重试均告失败。", flush=True)
     return ""
 
 def parse_llm_xml(xml_text: str) -> dict:
@@ -336,9 +341,6 @@ def parse_llm_xml(xml_text: str) -> dict:
         
         t_tag = re.search(r'<TITLE>(.*?)</TITLE>', theme_body, re.IGNORECASE | re.DOTALL)
         theme_title = t_tag.group(1).strip() if t_tag else ""
-        if not theme_title:
-            title_m = re.search(r'title\s*=\s*[\'"“”](.*?)[\'"“”]', attrs, re.IGNORECASE)
-            theme_title = title_m.group(1).strip() if title_m else "未命名主题"
             
         narrative_match = re.search(r'<NARRATIVE>(.*?)</NARRATIVE>', theme_body, re.IGNORECASE | re.DOTALL)
         narrative = narrative_match.group(1).strip() if narrative_match else ""
@@ -346,9 +348,6 @@ def parse_llm_xml(xml_text: str) -> dict:
         tweets = []
         for t_match in re.finditer(r'<TWEET\s+account=[\'"“”](.*?)[\'"“”]\s+role=[\'"“”](.*?)[\'"“”]>(.*?)</TWEET>', theme_body, re.IGNORECASE | re.DOTALL):
             tweets.append({"account": t_match.group(1).strip(), "role": t_match.group(2).strip(), "content": t_match.group(3).strip()})
-        if not tweets:
-            for t_match in re.finditer(r'<TWEET\s+account="(.*?)"\s+role="(.*?)">(.*?)</TWEET>', theme_body, re.IGNORECASE | re.DOTALL):
-                tweets.append({"account": t_match.group(1).strip(), "role": t_match.group(2).strip(), "content": t_match.group(3).strip()})
         
         con_match = re.search(r'<CONSENSUS>(.*?)</CONSENSUS>', theme_body, re.IGNORECASE | re.DOTALL)
         consensus = con_match.group(1).strip() if con_match else ""
@@ -384,7 +383,7 @@ def parse_llm_xml(xml_text: str) -> dict:
     return data
 
 # ==============================================================================
-# 🚀 V10.6 排版、渲染与生图模块 (完全保留)
+# 🚀 渲染与生图模块 (带报错探针)
 # ==============================================================================
 def render_feishu_card(parsed_data: dict, today_str: str):
     webhooks = get_feishu_webhooks()
@@ -438,8 +437,12 @@ def render_feishu_card(parsed_data: dict, today_str: str):
         }
     }
     for url in webhooks:
-        try: requests.post(url, json=card_payload, timeout=20)
-        except Exception: pass
+        try: 
+            resp = requests.post(url, json=card_payload, timeout=20)
+            if resp.status_code != 200:
+                print(f"⚠️ [飞书 Webhook 报错] 状态码: {resp.status_code}, 返回: {resp.text}", flush=True)
+        except Exception as e: 
+            print(f"⚠️ [飞书网络异常] 推送断开: {e}", flush=True)
 
 def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
     html_lines = []
@@ -488,15 +491,16 @@ def render_wechat_html(parsed_data: dict, cover_url: str = "") -> str:
 
 def generate_cover_image(prompt):
     if not SF_API_KEY or not prompt: 
-        print("⚠️ 生图跳过：未收到生图 prompt", flush=True)
         return ""
     try:
         resp = requests.post(URL_SF_IMAGE, headers={"Authorization": f"Bearer {SF_API_KEY}", "Content-Type": "application/json"}, json={"model": "Kwai-Kolors/Kolors", "prompt": prompt, "image_size": "1024x576"}, timeout=60)
         if resp.status_code == 200:
-            print("🎨 生图成功！", flush=True)
+            print("  🎨 硅基流动生图成功！", flush=True)
             return resp.json().get("images", [{}])[0].get("url") or resp.json().get("data", [{}])[0].get("url")
-        else: print(f"⚠️ 硅基流动报错: {resp.text}", flush=True)
-    except Exception as e: print(f"⚠️ 生图异常: {e}", flush=True)
+        else: 
+            print(f"  ⚠️ [SiliconFlow 生图报错] 状态码: {resp.status_code}, 详情: {resp.text}", flush=True)
+    except Exception as e: 
+        print(f"  ⚠️ [SiliconFlow 网络异常] 生图请求断开: {e}", flush=True)
     return ""
 
 def upload_to_imgbb_via_url(sf_url):
@@ -504,8 +508,12 @@ def upload_to_imgbb_via_url(sf_url):
     try:
         img_b64 = base64.b64encode(requests.get(sf_url, timeout=30).content).decode("utf-8")
         resp = requests.post(URL_IMGBB, data={"key": IMGBB_API_KEY, "image": img_b64}, timeout=45)
-        if resp.status_code == 200: return resp.json()["data"]["url"]
-    except: pass
+        if resp.status_code == 200: 
+            return resp.json()["data"]["url"]
+        else:
+            print(f"  ⚠️ [ImgBB 报错] 图床上传失败: {resp.text}", flush=True)
+    except Exception as e: 
+        print(f"  ⚠️ [ImgBB 异常] 上传断开: {e}", flush=True)
     return sf_url
 
 def push_to_wechat(html_content, title, cover_url=""):
@@ -514,9 +522,13 @@ def push_to_wechat(html_content, title, cover_url=""):
     payload = {"title": title, "author": "Prinski", "html_content": html_content, "cover_jpg": cover_url}
     for url in webhooks:
         try: 
-            requests.post(url, json=payload, timeout=30)
-            print(f"[Push/WeChat] OK Sent to {url.split('//')[-1][:15]}...", flush=True)
-        except: pass
+            resp = requests.post(url, json=payload, timeout=30)
+            if resp.status_code == 200:
+                print(f"  ✅ [微信推送成功] Sent to {url.split('//')[-1][:15]}...", flush=True)
+            else:
+                print(f"  ⚠️ [微信 Webhook 报错] 状态码 {resp.status_code}, 详情: {resp.text}", flush=True)
+        except Exception as e: 
+            print(f"  ⚠️ [微信推送异常] 网络断开: {e}", flush=True)
 
 def save_daily_data(today_str: str, post_objects: list, report_text: str):
     data_dir = Path(f"data/{today_str}")
@@ -551,11 +563,11 @@ def update_account_stats(final_feed: list, parsed_data: dict):
     stats_file.write_text(json.dumps(stats, ensure_ascii=False, indent=2), encoding="utf-8")
 
 # ==============================================================================
-# 🚀 MAIN 入口 (带 API 强力报错探针版)
+# 🚀 MAIN 入口 (全链路排雷探针版)
 # ==============================================================================
 def main():
     print("=" * 60, flush=True)
-    print(f"昨晚硅谷在聊啥 v13.2 (强力纠错探针版)", flush=True)
+    print(f"昨晚硅谷在聊啥 v14.0 (全链路监控探针版)", flush=True)
     print("=" * 60, flush=True)
 
     if not TWITTERAPI_IO_KEY or not TARGET_SET:
@@ -571,7 +583,6 @@ def main():
     all_raw = []
     acc_list = list(TARGET_SET)
     
-    # 🚨 将分块大小从 15 降到 10，防止 Query 字符串超长被服务端拒绝
     for i in range(0, len(acc_list), 10):
         chunk = acc_list[i:i+10]
         q1 = "(" + " OR ".join([f"from:{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} -filter:retweets"
@@ -584,10 +595,12 @@ def main():
                     for t in d1["tweets"]:
                         ct = unify_schema(t)
                         if ct["created_ts"] >= SINCE_TS: all_raw.append(ct)
+                else:
+                    print(f"⚠️ [TwitterAPI 警报] 原创搜索返回 200 OK，但 JSON 内无推文数据。原始回复: {resp1.text[:200]}", flush=True)
             else:
-                print(f"⚠️ [API 报错] 原创抓取失败 (状态码: {resp1.status_code}): {resp1.text}", flush=True)
+                print(f"❌ [TwitterAPI 报错] 原创抓取 HTTP {resp1.status_code}: {resp1.text}", flush=True)
         except Exception as e:
-            print(f"⚠️ [网络异常] 原创抓取请求超时或断开: {e}", flush=True)
+            print(f"⚠️ [TwitterAPI 网络异常] 原创抓取断开: {e}", flush=True)
                 
         q2 = "(" + " OR ".join([f"@{a}" for a in chunk]) + f") since:{SINCE_DATE_STR} min_faves:15 -filter:replies"
         try:
@@ -598,16 +611,17 @@ def main():
                     for t in d2["tweets"]:
                         ct = unify_schema(t)
                         if ct["created_ts"] >= SINCE_TS: all_raw.append(ct)
+                else:
+                    print(f"⚠️ [TwitterAPI 警报] 回响搜索返回 200 OK，但 JSON 内无推文数据。原始回复: {resp2.text[:200]}", flush=True)
             else:
-                print(f"⚠️ [API 报错] 回响抓取失败 (状态码: {resp2.status_code}): {resp2.text}", flush=True)
+                print(f"❌ [TwitterAPI 报错] 回响抓取 HTTP {resp2.status_code}: {resp2.text}", flush=True)
         except Exception as e:
-            print(f"⚠️ [网络异常] 回响抓取请求超时或断开: {e}", flush=True)
+            print(f"⚠️ [TwitterAPI 网络异常] 回响抓取断开: {e}", flush=True)
             
-        time.sleep(1.5) # 稍微延长休眠，防止触发限流
+        time.sleep(1.5)
 
     if not all_raw:
-        print("❌ 严重警告：本次运行未能从推特抓取到任何有效数据。请检查上述 API 报错日志！", flush=True)
-        # 如果一条推文都没有，直接终止，防止 Grok 凭空制造幻觉
+        print("❌ [终极警告] 本次运行未能从推特获取任何有效数据！程序强行终止，以防大模型产生幻觉报告。请排查上方的 TwitterAPI 报错日志！", flush=True)
         return
 
     top_feed = score_and_filter(all_raw)
@@ -623,7 +637,12 @@ def main():
                 if d3 and d3.get("tweets"):
                     replies = sorted([unify_schema(r) for r in d3["tweets"]], key=lambda x: x["likes"], reverse=True)
                     t["deep_replies"] = replies[:3]
-        except: pass
+                else:
+                    print(f"⚠️ [TwitterAPI 警报] 评论钻取 200 OK，无数据: {resp3.text[:150]}", flush=True)
+            else:
+                print(f"❌ [TwitterAPI 报错] 评论钻取 HTTP {resp3.status_code}: {resp3.text}", flush=True)
+        except Exception as e:
+            print(f"⚠️ [TwitterAPI 网络异常] 评论抓取断开: {e}", flush=True)
         time.sleep(1)
 
     formatted_feed = []
@@ -638,9 +657,9 @@ def main():
     combined_jsonl = "\n".join(json.dumps(obj, ensure_ascii=False) for obj in formatted_feed)
 
     # ---------------------------------------------------------
-    # 🧠 步骤 3: 提取历史记忆并呼叫 Grok (完全沿用 V10.6 逻辑)
+    # 🧠 步骤 3: 提取历史记忆并呼叫 Grok
     # ---------------------------------------------------------
-    today_accounts = set(t.get("author", "").lower() for t in top_feed)
+    today_accounts = set(t.get("a", "").lower() for t in formatted_feed)
     memory = load_memory()
     memory_context_lines = []
     for acc in today_accounts:
@@ -664,9 +683,10 @@ def main():
                 sf_url = generate_cover_image(parsed_data["cover"]["prompt"])
                 cover_url = upload_to_imgbb_via_url(sf_url) if sf_url else ""
             else:
-                print("\n[生图] ⚠️ 警告：未解析出 prompt 属性！", flush=True)
+                print("\n⚠️ [渲染警报] 未能从 Grok 报告中解析出生图 prompt 属性！", flush=True)
             
             render_feishu_card(parsed_data, today_str)
+            
             wechat_hooks = get_wechat_webhooks()
             if wechat_hooks:
                 html_content = render_wechat_html(parsed_data, cover_url)
@@ -675,8 +695,9 @@ def main():
             save_daily_data(today_str, formatted_feed, xml_result)
             update_account_stats(formatted_feed, parsed_data)
             
-            print("\n🎉 任务完美收官！", flush=True)
-        else: print("❌ LLM 处理失败。")
+            print("\n🎉 V14 全链路执行完毕！", flush=True)
+        else: 
+            print("❌ [终极警告] LLM 处理失败，无报告输出！", flush=True)
 
 if __name__ == "__main__":
     main()
