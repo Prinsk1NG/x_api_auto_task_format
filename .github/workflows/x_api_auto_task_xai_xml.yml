@@ -1,61 +1,77 @@
-name: 硅谷情报局 (V10.14)
+name: 硅谷情报局自动任务 (V11.0)
 
 on:
+  # 定时触发：每天北京时间早上 8:00 (对应 UTC 00:00)
   schedule:
-    - cron: '0 0 * * *' # 北京时间早上 8:00
+    - cron: '0 0 * * *'
+  
+  # 手动触发：允许在 GitHub Actions 页面点击 "Run workflow" 随时测试
   workflow_dispatch:
     inputs:
       test_mode:
-        type: boolean
-        description: '开启测试模式 (勾选后拦截主群推送)'
-        default: false
+        description: '是否开启测试模式 (true/false)'
+        required: true
+        default: 'false'
 
+# 🚨 极其重要：赋予 Action 修改仓库文件的权限
 permissions:
   contents: write
 
 jobs:
   build-and-run:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: 1. 拉取最新代码
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # 拉取完整历史，避免 Push 冲突
 
-      - name: 1. 安装环境
+      - name: 2. 安装 Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
           
-      - name: 2. 安装依赖
-        run: pip install requests xai-sdk
+      - name: 3. 安装核心依赖
+        run: |
+          python -m pip install --upgrade pip
+          # 🚨 必须包含 xai-sdk 用于调用 Grok 模型
+          pip install requests xai-sdk
           
-      - name: 3. 执行三阶段抓取与分析
+      - name: 4. 执行情报搜集与分析脚本
         env:
-          # 🚨 新增：推特列表 ID
-          TWITTER_LIST_ID: ${{ secrets.TWITTER_LIST_ID }}
-          
-          # 基础 API Keys
+          # 基础情报 API
           twitterapi_io_KEY: ${{ secrets.TWITTERAPI_IO_KEY }}
-          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           PPLX_API_KEY: ${{ secrets.PPLX_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           
-          # 推送地址
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          FEISHU_WEBHOOK_URL_1: ${{ secrets.FEISHU_WEBHOOK_URL_1 }}
+          # 逻辑与生图 API
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          SF_API_KEY: ${{ secrets.SF_API_KEY }}
+          IMGBB_API_KEY: ${{ secrets.IMGBB_API_KEY }}
           
-          # 模式控制
-          TEST_MODE_ENV: ${{ github.event.inputs.test_mode }}
+          # 飞书分发渠道
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}     # 调试群
+          FEISHU_WEBHOOK_URL_1: ${{ secrets.FEISHU_WEBHOOK_URL_1 }} # 核心主群
           
-        run: python x_api_auto_task_xai_xml.py
-
-      - name: 4. 持久化存档
+          # 微信分发渠道 (如果 Secrets 中配置了，会在这里生效)
+          JIJYUN_WEBHOOK_URL: ${{ secrets.JIJYUN_WEBHOOK_URL }}
+          OriSG_WEBHOOK_URL: ${{ secrets.OriSG_WEBHOOK_URL }}
+          OriCN_WEBHOOK_URL: ${{ secrets.OriCN_WEBHOOK_URL }}
+          
+          # 运行模式控制
+          TEST_MODE_ENV: ${{ github.event.inputs.test_mode || 'false' }}
         run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "Github-Bot"
-          # 保存所有抓取数据和更新后的记忆账本
-          git add data/
-          [ -f character_memory.json ] && git add character_memory.json
-          [ -f account_stats.json ] && git add account_stats.json
-          git commit -m "🤖 V10.14: 三阶段情报收割存档" || echo "No changes"
+          # 确保文件名与您仓库中的 Python 文件名一致
+          python x_api_auto_task_xai_xml.py
+
+      - name: 5. 自动保存每日快照与记忆账本
+        run: |
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          # 🚨 核心改动：统一添加 data 文件夹（里面已经包含了 memory 和 stats），以及本地名单
+          git add data/ whales.txt experts.txt || true
+          
+          git commit -m "🤖 [Daily Intelligence] Archive V11 reports, raw tweets and memory bank" || echo "No changes to commit"
           git push
