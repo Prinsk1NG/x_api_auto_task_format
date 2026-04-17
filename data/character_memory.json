@@ -1,29 +1,31 @@
 {
   "sama": [
-    "[2026-04-04]: OpenAI完成1220亿美元融资重组，这不是单纯融资，而是行业走向可持续股权模式的转折点。 ❤️ 48720 | 💬 2730",
     "[2026-04-04]: 我们收购Promptfoo是为了让ChatGPT在对抗攻击面前更加强大，AI安全必须内置而非后置。❤️ 31840 | 💬 2740",
     "[2026-04-04]: OpenAI已完成对Promptfoo的收购，以显著提升AI安全测试与防护能力，此举显示行业正将安全提升至战略核心。❤️ 27840 | 💬 1342",
     "[2026-04-04]: 我们收购Promptfoo以强化AI安全测试能力，同时行业正快速迈向自我改进系统。 ❤️ 39190 | 💬 1904",
-    "[2026-04-10]: It is very nice to see Codex getting so much love. We are launching a $100 ChatGPT Pro tier by very popular demand.（❤️ 4596 | 💬 818）"
+    "[2026-04-10]: It is very nice to see Codex getting so much love. We are launching a $100 ChatGPT Pro tier by very popular demand.（❤️ 4596 | 💬 818）",
+    "[2026-04-17]: Codex迎来大量重大改进，计算机使用功能远超我预期。它能同时使用Mac上所有App且不干扰我的直接工作，这才是真正的生产力升级。❤️ 5911 | 💬 715"
   ],
   "demishassabis": [
     "[2026-04-04]: Gemma 4以开放权重形式发布，旨在与全球顶级开源模型包括中国方案展开直接竞争。 ❤️ 31940 | 💬 1840",
     "[2026-04-09]: Gemma 4 以开放权重形式发布，旨在与全球顶级开源模型包括中国方案展开直接竞争。（❤️ 31940 | 💬 1840）",
-    "[2026-04-15]: 与Boston Dynamics合作令人振奋，Gemini Robotics-ER 1.6让机器人能自主读取复杂工业仪表，这是迈向物理世界实用智能的重要一步。❤️ 509 | 💬 31"
+    "[2026-04-15]: 与Boston Dynamics合作令人振奋，Gemini Robotics-ER 1.6让机器人能自主读取复杂工业仪表，这是迈向物理世界实用智能的重要一步。❤️ 509 | 💬 31",
+    "[2026-04-17]: 与Boston Dynamics的合作令人振奋，Gemini Robotics-ER 1.6让机器人能自主读取复杂工业仪表，这是迈向物理世界实用智能的重要一步。❤️ 509 | 💬 31"
   ],
   "elonmusk": [
-    "[2026-04-08]: 与Intel和Lip-Bu合作Terafab深感荣幸。我们将把所有逻辑、内存、封装和掩膜设备放在一栋楼里，实现极快的开发周期。这就是天堂。❤️ 108374 | 💬 6835",
     "[2026-04-12]: 和顶尖工程师一起创造不可思议的技术是我最享受的事。Tesla芯片研发工厂将把所有逻辑、内存、封装和掩膜设备放在一栋楼里，实现极快的开发周期。这就是天堂。（❤️ 108374 | 💬 6835）",
     "[2026-04-13]: 和顶尖工程师一起创造不可思议的技术是我最享受的事。Tesla芯片研发工厂将把所有逻辑、内存、封装和掩膜设备放在一栋楼里，实现极快的开发周期。这就是天堂。❤️ 108374 | 💬 6835",
     "[2026-04-14]: 和顶尖工程师一起创造不可思议的技术是我最享受的事。Tesla芯片研发工厂将把所有逻辑、内存、封装和掩膜设备放在一栋楼里，实现极快的开发周期。这就是天堂。❤️ 108374 | 💬 6835",
-    "[2026-04-16]: 和顶尖工程师一起创造不可思议的技术是我最享受的事。Tesla芯片研发工厂将所有逻辑、内存、封装和掩膜设备放在一栋楼里，实现极快的开发周期。这就是天堂。（❤️ 108374 | 💬 6835）"
+    "[2026-04-16]: 和顶尖工程师一起创造不可思议的技术是我最享受的事。Tesla芯片研发工厂将所有逻辑、内存、封装和掩膜设备放在一栋楼里，实现极快的开发周期。这就是天堂。（❤️ 108374 | 💬 6835）",
+    "[2026-04-17]: 与Intel和Lip-Bu合作Terafab深感荣幸。我们将把所有逻辑、内存、封装和掩膜设备放在一栋楼里，实现极快的开发周期。这就是天堂。❤️ 108374 | 💬 6835"
   ],
   "microsoft": [
     "[2026-04-04]: 微软将投资100亿美元在日本建设AI基础设施，与SoftBank等伙伴合作培养专业人才，同时发布转录、语音生成和图像创建三款内部AI模型。❤️ 1840 | 💬 392"
   ],
   "openai": [
     "[2026-04-04]: OpenAI收购Promptfoo以提升AI安全测试能力，DataBricks也通过收购强化SIEM产品，Meta同步组建AI原生硬件团队。❤️ 1250 | 💬 287",
-    "[2026-04-10]: We’re introducing a new $100/month Pro tier. This new tier offers 5x more Codex usage than Plus and is best for longer, high-effort Codex sessions.（❤️ 11762 | 💬 873）"
+    "[2026-04-10]: We’re introducing a new $100/month Pro tier. This new tier offers 5x more Codex usage than Plus and is best for longer, high-effort Codex sessions.（❤️ 11762 | 💬 873）",
+    "[2026-04-17]: OpenAI宣布Codex实现重大突破：现在能在Mac上使用任何App，通过自己的光标实现看到、点击、输入。它在后台运行不干扰用户，可进行前端迭代、App测试或任何无API的工作流。❤️ 1476 | 💬 32"
   ],
   "匿名用户": [
     "[2026-04-04]: 视频显示轮胎痕迹导致特斯拉FSD v14.2.2.5在55mph高速上突然转向另一辆车，司机被迫干预避免高速碰撞！马斯克，你何时承认自动驾驶实验失败了？ ❤️ 44 | 💬 9"
@@ -115,11 +117,11 @@
     "[2026-04-06]: 我在Claude Code里打造知识库怪兽：基于Karpathy的llm-wiki想法，结合/last30days和/wiki技能，做出可搜索、可对比时间线的交互可视化，还设置了“质疑假设”定时任务，目前专注企业AI领域。❤️ 510 | 💬 34"
   ],
   "bindureddy": [
-    "[2026-04-12]: Gemma 4是非常好的小模型，31B性能媲美大型MoE，是同尺寸世界最佳。GLM 5.1也已开源并登顶开源榜首，在coding和agentic任务上极强，是开发coding agents和OpenClaw的绝佳选择。开源小模型采用正在爆炸式增长。（❤️ 349 | 💬 33）",
     "[2026-04-13]: 🚨重磅宣布Agent Swarm——一个能构建完整商业的多代理系统。Master Agent生成多个Worker Agent，负责研究、设计、编码、测试和自动化，使用12+种LLM协同。最终它们将像人类团队一样拥有目标而非孤立任务，这是AGI的早期显现。❤️ 457 | 💬 16",
     "[2026-04-14]: 重磅发布Agent Swarm——Master Agent生成多个Worker Agent负责研究设计编码测试，使用12+种LLM协同。它们将像人类团队一样拥有目标而非孤立任务，这是AGI的早期显现。❤️ 457 | 💬 16",
     "[2026-04-14]: 未来不是单个Agent完成任务，而是像专家团队一样工作的Agent群：vibe coding Agent、测试监控Agent、SRE Agent、调试Agent，加一个主控Agent。❤️ 144 | 💬 69",
-    "[2026-04-15]: Bindureddy重磅发布Agent Swarm：Master Agent生成多个Worker Agent，负责研究、设计、编码、测试和自动化，使用12+种LLM协同。它们将像人类团队一样拥有共同目标而非孤立任务，这是AGI的早期显现。❤️ 457 | 💬 16"
+    "[2026-04-15]: Bindureddy重磅发布Agent Swarm：Master Agent生成多个Worker Agent，负责研究、设计、编码、测试和自动化，使用12+种LLM协同。它们将像人类团队一样拥有共同目标而非孤立任务，这是AGI的早期显现。❤️ 457 | 💬 16",
+    "[2026-04-17]: 重磅发布Agent Swarm——Master Agent生成多个Worker Agent负责研究、设计、编码、测试和自动化，使用12+种LLM协同。它们将像人类团队一样拥有共同目标而非孤立任务，这是AGI的早期显现。❤️ 457 | 💬 16"
   ],
   "leftcurvedev_": [
     "[2026-04-06]: Gemma-4-31B-JANG_4M-CRACK已发布：完全abliteration，HarmBench 93.7%，MMLU仅下降2%，非常干净。❤️ 715 | 💬 24"
@@ -158,7 +160,9 @@
     "[2026-04-09]: 我们发现近 30% 财富 500 强和 20% 全球 2000 强已是领先 AI 初创公司的付费客户，这与 MIT“95% pilot 失败”的统计完全相反。编码、客户支持和搜索是用例最明确的方向。（❤️ 382 | 💬 25）"
   ],
   "googledeepmind": [
-    "[2026-04-10]: Gemma 4 punches above its weight, outperforming models 10x its size without the need for massive compute. With 10M+ downloads in its first week...（❤️ 1056 | 💬 62）"
+    "[2026-04-10]: Gemma 4 punches above its weight, outperforming models 10x its size without the need for massive compute. With 10M+ downloads in its first week...（❤️ 1056 | 💬 62）",
+    "[2026-04-17]: Gemma 4以远超其体量的性能发布，无需海量算力即可超越10倍大小模型，首周下载量已超1000万。❤️ 1056 | 💬 62",
+    "[2026-04-17]: 我们与Boston Dynamics合作，用Gemini Robotics具身推理模型驱动Spot机器人。它能更好地理解环境、识别物体并执行简单指令，如整理房间。❤️ 1172 | 💬 60"
   ],
   "coreweave": [
     "[2026-04-11]: CoreWeave与Anthropic签订多年协议为其Claude模型提供算力支持，9大顶级AI模型提供商中已有9家选择CoreWeave。（❤️ 359 | 💬 11）"
@@ -217,5 +221,8 @@
   ],
   "chamath": [
     "[2026-04-16]: 尽管我们都想相信vibe coding，但现实是公司90%以上的代码是维护和迁移复杂遗留系统。除非能解决这90%，否则AI难以兑现其潜力。我们用Software Factory专门解决这部分。（❤️ 700 | 💬 79）"
+  ],
+  "simonw": [
+    "[2026-04-17]: 今天Pelican基准测试结果令人震惊，我用本地21GB的Qwen3.6-35B-A3B在笔记本上生成的Pelican比新Opus 4.7还要好。❤️ 1463 | 💬 106"
   ]
 }
